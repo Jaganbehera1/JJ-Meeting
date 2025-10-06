@@ -14,7 +14,8 @@ class VirtualClassroom {
         
         // WebRTC
         this.peers = {};
-        this.pendingSignals = new Set(); // Track processed signals to avoid duplicates
+        this.pendingSignals = new Set();
+        this.iceCandidateQueue = new Map();
         this.rtcConfig = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -233,8 +234,13 @@ class VirtualClassroom {
 
         console.log(`Participant joined: ${participantData.name}`);
 
+        // Determine who should be the initiator based on user ID comparison
+        const isInitiator = this.userId > participantId;
+        
+        console.log(`Creating connection with ${participantId}, initiator: ${isInitiator}`);
+
         // Create peer connection
-        await this.createPeerConnection(participantId, true);
+        await this.createPeerConnection(participantId, isInitiator);
         
         // Add to participants grid if teacher
         if (this.userRole === 'teacher') {
@@ -286,7 +292,10 @@ class VirtualClassroom {
         const peerConnection = new RTCPeerConnection(this.rtcConfig);
         this.peers[peerId] = peerConnection;
 
-        // Add current stream tracks (could be camera or screen share)
+        // Initialize ICE candidate queue for this peer
+        this.iceCandidateQueue.set(peerId, []);
+
+        // Add current stream tracks
         const currentStream = this.isScreenSharing && this.screenStream ? this.screenStream : this.localStream;
         if (currentStream) {
             currentStream.getTracks().forEach(track => {
@@ -306,6 +315,7 @@ class VirtualClassroom {
             if (event.candidate) {
                 const candidate = event.candidate;
                 if (candidate.candidate && candidate.sdpMid !== null && candidate.sdpMLineIndex !== null) {
+                    console.log(`Sending ICE candidate to ${peerId}`);
                     this.sendSignal(peerId, {
                         type: 'ice-candidate',
                         candidate: {
@@ -323,19 +333,40 @@ class VirtualClassroom {
             console.log(`Connection state with ${peerId}: ${peerConnection.connectionState}`);
             
             if (peerConnection.connectionState === 'connected') {
-                console.log(`Successfully connected to ${peerId}`);
-            } else if (peerConnection.connectionState === 'failed' || 
-                       peerConnection.connectionState === 'disconnected') {
-                console.log(`Connection with ${peerId} failed`);
+                console.log(`✅ Successfully connected to ${peerId}`);
+                // Clear ICE candidate queue on successful connection
+                this.iceCandidateQueue.delete(peerId);
+            } else if (peerConnection.connectionState === 'failed') {
+                console.log(`❌ Connection with ${peerId} failed`);
+                // Attempt to restart connection after a delay
+                setTimeout(() => {
+                    this.restartConnection(peerId);
+                }, 2000);
             }
         };
 
-        // Create offer if initiator
+        // Handle negotiation needed event
+        peerConnection.onnegotiationneeded = async () => {
+            console.log(`Negotiation needed with ${peerId}`);
+            if (isInitiator) {
+                try {
+                    const offer = await peerConnection.createOffer();
+                    await peerConnection.setLocalDescription(offer);
+                    
+                    this.sendSignal(peerId, {
+                        type: 'offer',
+                        offer: offer
+                    });
+                } catch (error) {
+                    console.error('Error creating negotiation offer:', error);
+                }
+            }
+        };
+
+        // Create initial offer if initiator
         if (isInitiator) {
             try {
-                // Wait a bit before creating offer to ensure peer is ready
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                
+                console.log(`Creating initial offer for ${peerId}`);
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
                 
@@ -344,11 +375,26 @@ class VirtualClassroom {
                     offer: offer
                 });
             } catch (error) {
-                console.error('Error creating offer:', error);
+                console.error('Error creating initial offer:', error);
             }
         }
 
         return peerConnection;
+    }
+
+    async restartConnection(peerId) {
+        console.log(`Restarting connection with ${peerId}`);
+        this.closePeerConnection(peerId);
+        
+        // Re-fetch participant data to determine initiator role
+        const participantRef = database.ref(`rooms/${this.roomId}/participants/${peerId}`);
+        const snapshot = await participantRef.once('value');
+        const participantData = snapshot.val();
+        
+        if (participantData) {
+            const isInitiator = this.userId > peerId;
+            await this.createPeerConnection(peerId, isInitiator);
+        }
     }
 
     async handleSignal(snapshot) {
@@ -361,7 +407,7 @@ class VirtualClassroom {
 
         if (fromUserId === this.userId) return;
 
-        // Check if we've already processed this signal to avoid duplicates
+        // Check if we've already processed this signal
         const signalKey = `${fromUserId}_${signalData.type}_${signalData.timestamp}`;
         if (this.pendingSignals.has(signalKey)) {
             console.log('Skipping duplicate signal:', signalKey);
@@ -370,7 +416,7 @@ class VirtualClassroom {
 
         this.pendingSignals.add(signalKey);
         
-        // Clean up old signals from the set
+        // Clean up old signals
         setTimeout(() => {
             this.pendingSignals.delete(signalKey);
         }, 10000);
@@ -380,47 +426,60 @@ class VirtualClassroom {
         try {
             let peerConnection = this.peers[fromUserId];
             
-            if (!peerConnection && type === 'offer') {
-                peerConnection = await this.createPeerConnection(fromUserId, false);
+            if (!peerConnection) {
+                // Create a new peer connection if we don't have one
+                const isInitiator = this.userId > fromUserId;
+                peerConnection = await this.createPeerConnection(fromUserId, isInitiator);
             }
 
             if (peerConnection) {
                 switch (type) {
                     case 'offer':
-                        // Check if we're in a state to handle offers
-                        if (peerConnection.signalingState !== 'stable') {
-                            console.log('Cannot handle offer, signaling state is:', peerConnection.signalingState);
-                            return;
+                        console.log(`Received offer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
+                        
+                        // If we're in a stable state, we can handle the offer
+                        if (peerConnection.signalingState === 'stable') {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                            const answerResponse = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answerResponse);
+                            
+                            this.sendSignal(fromUserId, {
+                                type: 'answer',
+                                answer: answerResponse
+                            });
+                            
+                            // Process any queued ICE candidates now that we have remote description
+                            this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        } else {
+                            console.log(`Cannot handle offer from ${fromUserId}, signaling state is: ${peerConnection.signalingState}`);
                         }
-                        
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                        const answerResponse = await peerConnection.createAnswer();
-                        await peerConnection.setLocalDescription(answerResponse);
-                        
-                        this.sendSignal(fromUserId, {
-                            type: 'answer',
-                            answer: answerResponse
-                        });
                         break;
                         
                     case 'answer':
-                        // Check if we're expecting an answer
-                        if (peerConnection.signalingState !== 'have-local-offer') {
-                            console.log('Not expecting answer, signaling state is:', peerConnection.signalingState);
-                            return;
-                        }
+                        console.log(`Received answer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
                         
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                        if (peerConnection.signalingState === 'have-local-offer') {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                            
+                            // Process any queued ICE candidates now that we have remote description
+                            this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        } else {
+                            console.log(`Not expecting answer from ${fromUserId}, signaling state is: ${peerConnection.signalingState}`);
+                        }
                         break;
                         
                     case 'ice-candidate':
                         if (candidate && candidate.candidate && candidate.sdpMid !== null && candidate.sdpMLineIndex !== null) {
-                            // Only add ICE candidates if we have a remote description
                             if (peerConnection.remoteDescription) {
+                                // We have remote description, add the candidate immediately
                                 await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                                console.log(`Added ICE candidate from ${fromUserId}`);
                             } else {
-                                console.log('No remote description set, queuing ICE candidate');
-                                // You could queue ICE candidates here if needed
+                                // Queue the candidate until we have remote description
+                                console.log(`Queuing ICE candidate from ${fromUserId}`);
+                                const queue = this.iceCandidateQueue.get(fromUserId) || [];
+                                queue.push(candidate);
+                                this.iceCandidateQueue.set(fromUserId, queue);
                             }
                         }
                         break;
@@ -428,8 +487,24 @@ class VirtualClassroom {
             }
         } catch (error) {
             console.error('Error handling signal:', error);
-            // Remove from pending signals on error
             this.pendingSignals.delete(signalKey);
+        }
+    }
+
+    async processQueuedIceCandidates(peerId, peerConnection) {
+        const queue = this.iceCandidateQueue.get(peerId);
+        if (queue && queue.length > 0) {
+            console.log(`Processing ${queue.length} queued ICE candidates for ${peerId}`);
+            for (const candidate of queue) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+                    console.log(`Added queued ICE candidate from ${peerId}`);
+                } catch (error) {
+                    console.error('Error adding queued ICE candidate:', error);
+                }
+            }
+            // Clear the queue
+            this.iceCandidateQueue.set(peerId, []);
         }
     }
 
@@ -598,6 +673,8 @@ class VirtualClassroom {
         if (this.peers[peerId]) {
             this.peers[peerId].close();
             delete this.peers[peerId];
+            // Clear ICE candidate queue
+            this.iceCandidateQueue.delete(peerId);
             console.log(`Closed connection with ${peerId}`);
         }
     }
