@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoom Teaching App</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1>🎓 Virtual Classroom</h1>
+                <span id="roomInfo" class="room-info">Room: </span>
+            </div>
+            <div class="header-right">
+                <span id="userInfo" class="user-info"></span>
+                <button id="leaveBtn" class="btn btn-danger">Leave Class</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-container">
+            <!-- Teacher/Shared Screen Section - Only for Students -->
+            <section id="teacherSection" class="teacher-section">
+                <div class="teacher-header">
+                    <h3 id="teacherTitle">Teacher's Screen</h3>
+                </div>
+                <div class="teacher-container">
+                    <video id="teacherVideo" autoplay playsinline></video>
+                </div>
+            </section>
+
+            <!-- Participants Grid - Only for Teacher -->
+            <section id="participantsSection" class="participants-section">
+                <div class="participants-header">
+                    <h3>Students <span id="participantsCount" class="count-badge">0</span></h3>
+                </div>
+                <div id="participantsGrid" class="participants-grid">
+                    <!-- Participants will be dynamically added here -->
+                </div>
+            </section>
+        </main>
+
+        <!-- Controls Footer -->
+        <footer class="controls-footer">
+            <div class="controls-container">
+                <button id="videoToggle" class="control-btn control-active">
+                    <span class="control-icon">📹</span>
+                    <span class="control-text">Stop Video</span>
+                </button>
+                
+                <button id="audioToggle" class="control-btn control-active">
+                    <span class="control-icon">🎤</span>
+                    <span class="control-text">Mute</span>
+                </button>
+                
+                <button id="screenShareBtn" class="control-btn">
+                    <span class="control-icon">🖥️</span>
+                    <span class="control-text">Share Screen</span>
+                </button>
+                
+                <button id="raiseHandBtn" class="control-btn">
+                    <span class="control-icon">✋</span>
+                    <span class="control-text">Raise Hand</span>
+                </button>
+            </div>
+        </footer>
+
+        <!-- Join Modal -->
+        <div id="joinModal" class="modal active">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Join Virtual Classroom</h2>
+                    <p>Enter your details to join the class</p>
+                </div>
+                <div class="modal-body">
+                    <div class="input-group">
+                        <label for="userName">Your Name</label>
+                        <input type="text" id="userName" placeholder="Enter your full name" maxlength="30">
+                    </div>
+                    
+                    <div class="input-group">
+                        <label for="userRole">I am a</label>
+                        <select id="userRole">
+                            <option value="student">Student</option>
+                            <option value="teacher">Teacher</option>
+                        </select>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label for="roomId">Classroom ID</label>
+                        <input type="text" id="roomId" placeholder="Enter classroom ID" value="CLASS-001">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="joinClassBtn" class="btn btn-primary btn-large">Join Classroom</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    
+    <!-- Firebase Configuration -->
+    <script src="firebase-config.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
