@@ -77,12 +77,24 @@ class VirtualClassroom {
         this.screenShareBtn.addEventListener('click', () => this.toggleScreenShare());
         this.raiseHandBtn.addEventListener('click', () => this.toggleRaiseHand());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
+        const toggleBtn = document.getElementById('toggleTeacherSize');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => this.toggleTeacherMaximize());
+        }
         
         // Modal buttons
         this.joinClassBtn.addEventListener('click', () => this.joinRoom());
         this.userNameInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.joinRoom();
         });
+    }
+
+    toggleTeacherMaximize() {
+        // Only students can toggle maximizing teacher view
+        if (this.userRole !== 'student') return;
+        const isMax = this.teacherSection.classList.toggle('maximized');
+        const btn = document.getElementById('toggleTeacherSize');
+        if (btn) btn.title = isMax ? 'Minimize' : 'Maximize';
     }
 
     async initializeLocalStream(constraints = null) {
