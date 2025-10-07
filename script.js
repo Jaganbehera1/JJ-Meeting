@@ -180,12 +180,23 @@ class VirtualClassroom {
 
     async cleanupOldRoomData() {
         try {
-            // Clean up the entire room to remove corrupted data
-            const roomRef = database.ref(`rooms/${this.roomId}`);
-            await roomRef.remove();
-            console.log('🧹 Cleaned up old room data completely');
+            // Only clear stale incoming signals for this user; do NOT remove the entire room
+            const mySignalsRef = database.ref(`rooms/${this.roomId}/signals/${this.userId}`);
+            await mySignalsRef.remove();
+            console.log('🧹 Cleared my stale incoming signals');
+
+            // If teacher joins and room has no participants yet, optionally clear room-level transient data
+            if (this.userRole === 'teacher') {
+                const participantsSnap = await database.ref(`rooms/${this.roomId}/participants`).once('value');
+                if (!participantsSnap.exists()) {
+                    // Clean transient signaling/screenShare but keep structure
+                    await database.ref(`rooms/${this.roomId}/signals`).remove().catch(() => {});
+                    await database.ref(`rooms/${this.roomId}/screenShare`).set({ active: false }).catch(() => {});
+                    console.log('🧹 Teacher prepped empty room (cleared signals, reset screenShare)');
+                }
+            }
         } catch (error) {
-            console.log('ℹ️ No old room data to clean up or error:', error);
+            console.log('ℹ️ No old signals to clean up or error:', error);
         }
     }
 
@@ -238,8 +249,8 @@ class VirtualClassroom {
             this.handleParticipantLeft(snapshot);
         });
 
-        // Listen for WebRTC signals
-        this.signalsRef = database.ref(`rooms/${this.roomId}/signals`);
+        // Listen for WebRTC signals targeted to this user
+        this.signalsRef = database.ref(`rooms/${this.roomId}/signals/${this.userId}`);
         this.signalsRef.on('child_added', (snapshot) => {
             this.handleSignal(snapshot);
         });
@@ -577,7 +588,7 @@ class VirtualClassroom {
                 switch (type) {
                     case 'offer':
                         console.log(`📨 Processing offer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
-                        if (peerConnection.signalingState === 'stable') {
+                        if (peerConnection.signalingState === 'stable' || peerConnection.signalingState === 'have-remote-offer') {
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                             const answerResponse = await peerConnection.createAnswer();
                             await peerConnection.setLocalDescription(answerResponse);
@@ -594,7 +605,7 @@ class VirtualClassroom {
                         
                     case 'answer':
                         console.log(`📨 Processing answer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
-                        if (peerConnection.signalingState === 'have-local-offer') {
+                        if (peerConnection.signalingState === 'have-local-offer' || peerConnection.signalingState === 'stable') {
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
                             console.log(`✅ Set remote description from ${fromUserId}`);
                             this.processQueuedIceCandidates(fromUserId, peerConnection);
@@ -642,7 +653,7 @@ class VirtualClassroom {
         signal.from = this.userId;
         signal.timestamp = Date.now();
         
-        const signalRef = database.ref(`rooms/${this.roomId}/signals`).push();
+        const signalRef = database.ref(`rooms/${this.roomId}/signals/${toUserId}`).push();
         signalRef.set(signal);
         
         console.log(`📨 Sent ${signal.type} signal to ${toUserId}`);
