@@ -214,8 +214,8 @@ class VirtualClassroom {
             this.handleParticipantLeft(snapshot);
         });
 
-        // Listen for WebRTC signals
-        this.signalsRef = database.ref(`rooms/${this.roomId}/signals`);
+        // Listen for WebRTC signals targeted to this user
+        this.signalsRef = database.ref(`rooms/${this.roomId}/signals/${this.userId}`);
         this.signalsRef.on('child_added', (snapshot) => {
             this.handleSignal(snapshot);
         });
@@ -577,7 +577,7 @@ class VirtualClassroom {
         signal.from = this.userId;
         signal.timestamp = Date.now();
         
-        const signalRef = database.ref(`rooms/${this.roomId}/signals`).push();
+        const signalRef = database.ref(`rooms/${this.roomId}/signals/${toUserId}`).push();
         signalRef.set(signal);
         
         setTimeout(() => {
@@ -902,6 +902,17 @@ class VirtualClassroom {
                  localVideo.srcObject = this.localStream;
                  try { localVideo.play().catch(() => {}); } catch (_) {}
              }
+             // Proactively re-offer to all peers to ensure cameras are re-negotiated
+             for (const peerId of Object.keys(this.peers)) {
+                 const pc = this.peers[peerId];
+                 if (pc && pc.connectionState === 'connected') {
+                     try {
+                         const offer = await pc.createOffer({ iceRestart: true });
+                         await pc.setLocalDescription(offer);
+                         this.sendSignal(peerId, { type: 'offer', offer });
+                     } catch (_) {}
+                 }
+             }
          }
  
          console.log("Screen share stopped and camera restored.");
@@ -928,14 +939,19 @@ class VirtualClassroom {
                 this.teacherTitle.textContent = "Teacher's Screen";
                 const teacherId = this.currentTeacherId || (screenData ? screenData.teacherId : null);
                 const pc = teacherId ? this.peers[teacherId] : null;
-                if (pc) {
-                    const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
-                    if (receiver && receiver.track) {
-                        const stream = new MediaStream([receiver.track]);
-                        this.teacherVideo.srcObject = stream;
-                        try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
-                    }
+        if (pc) {
+            // Prefer full remote stream from ontrack if already attached
+            if (this.teacherVideo && this.teacherVideo.srcObject instanceof MediaStream && this.teacherVideo.srcObject.getVideoTracks().length > 0) {
+                try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
+            } else {
+                const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
+                if (receiver && receiver.track) {
+                    const stream = new MediaStream([receiver.track]);
+                    this.teacherVideo.srcObject = stream;
+                    try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
                 }
+            }
+        }
             }
         }
     }
