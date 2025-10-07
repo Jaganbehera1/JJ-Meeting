@@ -239,11 +239,6 @@ class VirtualClassroom {
                 if (participantData.role === 'teacher' && participantId !== this.userId) {
                     this.currentTeacherId = participantId;
                     console.log(`Found teacher: ${participantData.name} (${participantId})`);
-                    
-                    // If student finds teacher, initiate connection
-                    if (this.userRole === 'student') {
-                        await this.createPeerConnection(participantId, true);
-                    }
                     break;
                 }
             }
@@ -261,11 +256,6 @@ class VirtualClassroom {
         // Update teacher reference if this is a teacher
         if (participantData.role === 'teacher') {
             this.currentTeacherId = participantId;
-            
-            // Student should connect to teacher
-            if (this.userRole === 'student') {
-                await this.createPeerConnection(participantId, true);
-            }
         }
 
         // Determine connection type based on roles
@@ -274,8 +264,8 @@ class VirtualClassroom {
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
         } else if (this.userRole === 'student' && participantData.role === 'teacher') {
-            // Student connecting to teacher - already handled above
-            console.log('Student connecting to teacher');
+            // Student connecting to teacher
+            await this.createPeerConnection(participantId, true);
         } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
             // Another teacher joined - handle accordingly
             console.log('Another teacher joined the room');
@@ -568,7 +558,6 @@ class VirtualClassroom {
                 if (this.userRole === 'student' && participantData.role === 'teacher') {
                     // Student receiving teacher's stream
                     this.teacherVideo.srcObject = stream;
-                    this.teacherVideo.style.display = 'block';
                     this.teacherTitle.textContent = `${participantData.name}'s Screen`;
                     if (participantData.screenSharing) {
                         this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
@@ -611,7 +600,6 @@ class VirtualClassroom {
                     const videoElement = participantCard.querySelector('.participant-video');
                     if (videoElement) {
                         videoElement.srcObject = stream;
-                        videoElement.style.display = 'block';
                         videoElement.onloadedmetadata = () => {
                             videoElement.play().catch(e => console.log('Play error:', e));
                         };
@@ -626,7 +614,6 @@ class VirtualClassroom {
             const videoElement = participantCard.querySelector('.participant-video');
             if (videoElement) {
                 videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
             }
         }
     }
@@ -684,12 +671,7 @@ class VirtualClassroom {
         participantCard.id = `participant-${participantId}`;
 
         participantCard.innerHTML = `
-            <div class="participant-placeholder">
-                <div class="placeholder-content">
-                    <div class="placeholder-icon">👤</div>
-                    <p>${participantData.name}</p>
-                </div>
-            </div>
+            <video class="participant-video" autoplay playsinline></video>
             <div class="participant-info">
                 <span class="participant-name">${participantData.name}</span>
                 <div class="participant-status">
@@ -751,7 +733,7 @@ class VirtualClassroom {
         }
     }
 
-    // Media Controls
+    // Media Controls (keep all media control methods the same as before)
     async toggleVideo() {
         if (!this.localStream) return;
 
