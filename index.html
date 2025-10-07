@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zoom Teaching App</title>
+    <title>Virtual Classroom</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,10 +12,10 @@
         <header class="header">
             <div class="header-left">
                 <h1>🎓 Virtual Classroom</h1>
-                <span id="roomInfo" class="room-info">Room: </span>
+                <span id="roomInfo" class="room-info">Not connected</span>
             </div>
             <div class="header-right">
-                <span id="userInfo" class="user-info"></span>
+                <span id="userInfo" class="user-info">Guest</span>
                 <button id="leaveBtn" class="btn btn-danger">Leave Class</button>
             </div>
         </header>
@@ -28,7 +28,14 @@
                     <h3 id="teacherTitle">Teacher's Screen</h3>
                 </div>
                 <div class="teacher-container">
-                    <video id="teacherVideo" autoplay playsinline></video>
+                    <video id="teacherVideo" autoplay playsinline muted></video>
+                    <div id="teacherPlaceholder" class="video-placeholder">
+                        <div class="placeholder-content">
+                            <div class="placeholder-icon">👨‍🏫</div>
+                            <p>Teacher's video will appear here</p>
+                            <p class="placeholder-subtext">Waiting for teacher to join...</p>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -78,7 +85,7 @@
                 <div class="modal-body">
                     <div class="input-group">
                         <label for="userName">Your Name</label>
-                        <input type="text" id="userName" placeholder="Enter your full name" maxlength="30">
+                        <input type="text" id="userName" placeholder="Enter your full name" maxlength="30" value="Student">
                     </div>
                     
                     <div class="input-group">
@@ -99,14 +106,16 @@
                 </div>
             </div>
         </div>
+
+        <!-- Notification Container -->
+        <div id="notificationContainer" class="notification-container"></div>
     </div>
 
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     
-    <!-- Firebase Configuration -->
-    <script src="firebase-config.js"></script>
+    <!-- App Script -->
     <script src="script.js"></script>
 </body>
 </html>

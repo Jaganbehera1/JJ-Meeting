@@ -19,7 +19,7 @@
 
 html, body {
     height: 100%;
-    overflow: hidden;
+    overflow: auto;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: var(--bg-dark);
     color: var(--text-light);
@@ -28,7 +28,7 @@ html, body {
 #app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    min-height: 100vh;
 }
 
 /* Header */
@@ -67,9 +67,8 @@ html, body {
     display: flex;
     gap: 1rem;
     padding: 1rem;
-    overflow: hidden;
-    height: calc(100vh - 140px);
-    min-height: 0;
+    overflow: auto;
+    min-height: 400px;
 }
 
 /* Teacher Section - Only for Students */
@@ -97,7 +96,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 0;
+    min-height: 400px;
 }
 
 #teacherVideo {
@@ -105,6 +104,36 @@ html, body {
     height: 100%;
     object-fit: contain;
     background: #000;
+    display: none;
+}
+
+.video-placeholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-dark);
+}
+
+.placeholder-content {
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.placeholder-icon {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.placeholder-subtext {
+    font-size: 0.9rem;
+    margin-top: 0.5rem;
+    opacity: 0.7;
 }
 
 /* Participants Section - Only for Teacher */
@@ -130,7 +159,7 @@ html, body {
     gap: 1rem;
     overflow-y: auto;
     padding: 0.5rem;
-    min-height: 0;
+    min-height: 200px;
 }
 
 .participant-card {
@@ -157,6 +186,16 @@ html, body {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: none;
+}
+
+.participant-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #1e293b, #334155);
 }
 
 .participant-info {
@@ -204,7 +243,7 @@ html, body {
     background: var(--bg-card);
     border-top: 1px solid var(--border-color);
     padding: 1rem 2rem;
-    flex-shrink: 0;
+    margin-top: auto;
 }
 
 .controls-container {
@@ -240,6 +279,17 @@ html, body {
 
 .control-btn.danger {
     background: var(--danger-color);
+}
+
+.control-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.control-btn:disabled:hover {
+    background: var(--bg-hover);
+    transform: none;
 }
 
 .control-icon {
@@ -373,6 +423,62 @@ html, body {
     font-weight: 600;
 }
 
+/* Notifications */
+.notification-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.notification {
+    background: var(--primary-color);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    animation: slideIn 0.3s ease;
+    max-width: 300px;
+    word-wrap: break-word;
+}
+
+.notification.success {
+    background: var(--success-color);
+}
+
+.notification.error {
+    background: var(--danger-color);
+}
+
+.notification.warning {
+    background: var(--warning-color);
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
 /* Scrollbar */
 .participants-grid::-webkit-scrollbar {
     width: 8px;
@@ -390,6 +496,21 @@ html, body {
 
 .participants-grid::-webkit-scrollbar-thumb:hover {
     background: #1d4ed8;
+}
+
+/* Loading Spinner */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
 
 /* Responsive Design */
@@ -423,5 +544,10 @@ html, body {
     
     .control-text {
         font-size: 0.7rem;
+    }
+    
+    .modal-content {
+        margin: 1rem;
+        padding: 1.5rem;
     }
 }
