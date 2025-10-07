@@ -148,6 +148,8 @@ class VirtualClassroom {
             
             // Show/hide sections based on role
             this.updateUIBasedOnRole();
+            // Unlock autoplay so remote audio can play after first interaction
+            this.installAudioUnlockOnce();
             
             // Initialize Firebase and WebRTC
             await this.initializeFirebase();
@@ -161,15 +163,30 @@ class VirtualClassroom {
     }
 
     updateUIBasedOnRole() {
-        if (this.userRole === 'teacher') {
-            // Teacher sees only students grid
-            this.teacherSection.style.display = 'none';
-            this.participantsSection.style.display = 'flex';
-        } else {
-            // Student sees only teacher's video
-            this.teacherSection.style.display = 'flex';
-            this.participantsSection.style.display = 'none';
-        }
+        // Show both sections for all users
+        this.teacherSection.style.display = 'flex';
+        this.participantsSection.style.display = 'flex';
+    }
+
+    installAudioUnlockOnce() {
+        if (this._audioUnlockInstalled) return;
+        this._audioUnlockInstalled = true;
+        const tryUnlock = () => {
+            const mediaEls = document.querySelectorAll('video, audio');
+            mediaEls.forEach(el => {
+                try {
+                    el.muted = false;
+                    const p = el.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => {});
+                } catch (_) {}
+            });
+            document.removeEventListener('click', tryUnlock);
+            document.removeEventListener('touchstart', tryUnlock);
+            document.removeEventListener('keydown', tryUnlock);
+        };
+        document.addEventListener('click', tryUnlock, { once: true });
+        document.addEventListener('touchstart', tryUnlock, { once: true });
+        document.addEventListener('keydown', tryUnlock, { once: true });
     }
 
     async initializeFirebase() {
@@ -260,13 +277,16 @@ class VirtualClassroom {
 
         // Determine connection type based on roles
         if (this.userRole === 'teacher' && participantData.role === 'student') {
-            // Teacher connecting to student
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
-            } else if (this.userRole === 'student' && participantData.role === 'teacher') {
-                // Student connecting to teacher — student should NOT be initiator (avoids glare)
-                await this.createPeerConnection(participantId, false);
-            } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
+        } else if (this.userRole === 'student' && participantData.role === 'teacher') {
+            await this.createPeerConnection(participantId, false);
+        } else if (this.userRole === 'student' && participantData.role === 'student') {
+            // Student-to-student connection: deterministic initiator to avoid glare
+            const isInitiator = this.userId < participantId;
+            await this.createPeerConnection(participantId, isInitiator);
+            this.addParticipantToGrid(participantId, participantData);
+        } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
             // Another teacher joined - handle accordingly
             console.log('Another teacher joined the room');
         }
@@ -600,8 +620,8 @@ class VirtualClassroom {
                     if (participantData.screenSharing) {
                         this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
                     }
-                } else if (this.userRole === 'teacher' && participantData.role === 'student') {
-                    // Teacher receiving student's stream
+                } else if (participantData.role === 'student') {
+                    // Any participant receiving a student stream -> show in grid
                     this.showParticipantVideo(peerId, stream);
                 }
             }
