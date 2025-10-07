@@ -149,6 +149,9 @@ class VirtualClassroom {
             // Show/hide sections based on role
             this.updateUIBasedOnRole();
             
+            // Clean up old room data first
+            await this.cleanupOldRoomData();
+            
             // Initialize Firebase and WebRTC
             await this.initializeFirebase();
             this.setupFirebaseListeners();
@@ -169,6 +172,17 @@ class VirtualClassroom {
             // Student sees only teacher's video
             this.teacherSection.style.display = 'flex';
             this.participantsSection.style.display = 'none';
+        }
+    }
+
+    async cleanupOldRoomData() {
+        try {
+            // Clean up the entire room to remove corrupted data
+            const roomRef = database.ref(`rooms/${this.roomId}`);
+            await roomRef.remove();
+            console.log('Cleaned up old room data completely');
+        } catch (error) {
+            console.log('No old room data to clean up or error:', error);
         }
     }
 
@@ -205,9 +219,6 @@ class VirtualClassroom {
     }
 
     setupFirebaseListeners() {
-        // Clean up old signals first
-        this.cleanupOldSignals();
-        
         // Listen for participants
         this.participantsRef = database.ref(`rooms/${this.roomId}/participants`);
         this.participantsRef.on('child_added', (snapshot) => {
@@ -234,20 +245,10 @@ class VirtualClassroom {
             this.handleScreenShareUpdate(snapshot);
         });
 
-        // Connect to existing participants
+        // Connect to existing participants after a delay
         setTimeout(() => {
             this.connectToExistingParticipants();
-        }, 2000);
-    }
-
-    async cleanupOldSignals() {
-        try {
-            const signalsRef = database.ref(`rooms/${this.roomId}/signals`);
-            await signalsRef.remove();
-            console.log('Cleaned up old signals');
-        } catch (error) {
-            console.log('No signals to clean up or error:', error);
-        }
+        }, 3000);
     }
 
     async connectToExistingParticipants() {
@@ -288,11 +289,6 @@ class VirtualClassroom {
                     await this.createPeerConnection(participantId, true);
                     this.addParticipantToGrid(participantId, participantData);
                 }
-                // Students connect to other students for audio
-                else if (this.userRole === 'student' && participantRole === 'student') {
-                    console.log(`Student connecting to student: ${participantName}`);
-                    await this.createPeerConnection(participantId, true);
-                }
             }
 
             this.updateParticipantsCount();
@@ -329,11 +325,6 @@ class VirtualClassroom {
             console.log(`Teacher connecting to new student: ${participantName}`);
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
-        }
-        // Students connect to other students for audio
-        else if (this.userRole === 'student' && participantRole === 'student') {
-            console.log(`Student connecting to new student: ${participantName}`);
-            await this.createPeerConnection(participantId, true);
         }
 
         this.updateParticipantsCount();
@@ -410,8 +401,15 @@ class VirtualClassroom {
             });
         }
 
-        // Handle incoming stream
+        // Handle incoming stream - FIXED: Only handle once per connection
+        let streamProcessed = false;
         peerConnection.ontrack = (event) => {
+            if (streamProcessed) {
+                console.log('Stream already processed for:', peerId);
+                return;
+            }
+            streamProcessed = true;
+            
             console.log('Received remote stream from:', peerId);
             const [remoteStream] = event.streams;
             if (remoteStream) {
@@ -440,14 +438,15 @@ class VirtualClassroom {
                 console.log(`❌ Connection failed with ${peerId}`);
                 setTimeout(() => {
                     this.restartConnection(peerId);
-                }, 2000);
+                }, 3000);
             }
         };
 
         // Create initial offer if initiator
         if (isInitiator) {
             try {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Wait a bit to ensure everything is ready
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -457,6 +456,7 @@ class VirtualClassroom {
                     offer: offer
                 });
                 
+                console.log(`Offer created and sent to ${peerId}`);
             } catch (error) {
                 console.error('Error creating initial offer:', error);
             }
@@ -470,7 +470,7 @@ class VirtualClassroom {
         
         this.closePeerConnection(peerId);
         
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         try {
             const participantRef = database.ref(`rooms/${this.roomId}/participants/${peerId}`);
@@ -481,10 +481,10 @@ class VirtualClassroom {
                 const participantRole = participantData.role || 'student';
                 const shouldReconnect = 
                     (this.userRole === 'teacher' && participantRole === 'student') ||
-                    (this.userRole === 'student' && participantRole === 'teacher') ||
-                    (this.userRole === 'student' && participantRole === 'student');
+                    (this.userRole === 'student' && participantRole === 'teacher');
                 
                 if (shouldReconnect) {
+                    console.log(`Reconnecting to ${participantData.name}`);
                     await this.createPeerConnection(peerId, true);
                 }
             }
@@ -527,8 +527,7 @@ class VirtualClassroom {
                     const participantRole = participantData.role || 'student';
                     const shouldConnect = 
                         (this.userRole === 'teacher' && participantRole === 'student') ||
-                        (this.userRole === 'student' && participantRole === 'teacher') ||
-                        (this.userRole === 'student' && participantRole === 'student');
+                        (this.userRole === 'student' && participantRole === 'teacher');
                     
                     if (shouldConnect) {
                         peerConnection = await this.createPeerConnection(fromUserId, false);
@@ -539,21 +538,27 @@ class VirtualClassroom {
             if (peerConnection) {
                 switch (type) {
                     case 'offer':
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                        const answerResponse = await peerConnection.createAnswer();
-                        await peerConnection.setLocalDescription(answerResponse);
-                        
-                        this.sendSignal(fromUserId, {
-                            type: 'answer',
-                            answer: answerResponse
-                        });
-                        
-                        this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        console.log(`Received offer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
+                        if (peerConnection.signalingState === 'stable') {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                            const answerResponse = await peerConnection.createAnswer();
+                            await peerConnection.setLocalDescription(answerResponse);
+                            
+                            this.sendSignal(fromUserId, {
+                                type: 'answer',
+                                answer: answerResponse
+                            });
+                            
+                            this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        }
                         break;
                         
                     case 'answer':
-                        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                        this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        console.log(`Received answer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
+                        if (peerConnection.signalingState === 'have-local-offer') {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                            this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        }
                         break;
                         
                     case 'ice-candidate':
@@ -578,6 +583,7 @@ class VirtualClassroom {
     async processQueuedIceCandidates(peerId, peerConnection) {
         const queue = this.iceCandidateQueue.get(peerId);
         if (queue && queue.length > 0) {
+            console.log(`Processing ${queue.length} queued ICE candidates for ${peerId}`);
             for (const candidate of queue) {
                 try {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
@@ -627,34 +633,11 @@ class VirtualClassroom {
                 } else if (this.userRole === 'teacher' && participantRole === 'student') {
                     // Teacher receiving student's stream
                     this.showParticipantVideo(peerId, stream, participantData);
-                } else if (this.userRole === 'student' && participantRole === 'student') {
-                    // Student receiving other student's audio
-                    this.handleStudentAudio(peerId, stream, participantData);
                 }
             }
         }).catch(error => {
             console.error('Error checking participant data:', error);
         });
-    }
-
-    handleStudentAudio(peerId, stream, participantData) {
-        if (this.userRole !== 'student') return;
-
-        const audioTracks = stream.getAudioTracks();
-        if (audioTracks.length > 0) {
-            let audioElement = document.getElementById(`student-audio-${peerId}`);
-            if (!audioElement) {
-                audioElement = document.createElement('audio');
-                audioElement.id = `student-audio-${peerId}`;
-                audioElement.autoplay = true;
-                audioElement.style.display = 'none';
-                document.body.appendChild(audioElement);
-            }
-
-            audioElement.srcObject = stream;
-            const participantName = participantData.name || 'Student';
-            console.log(`Added audio stream from student: ${participantName}`);
-        }
     }
 
     showParticipantVideo(peerId, stream, participantData) {
