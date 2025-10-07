@@ -922,18 +922,19 @@ class VirtualClassroom {
                 this.teacherTitle.textContent = `${screenData.teacherName} - Screen Sharing`;
             }
         } else if (!screenData || !screenData.active) {
-            // Screen share ended – clear any frozen frame and reset title for students
+            // Screen share ended – ensure students see the teacher's camera again
             this.screenSharingTeacherId = null;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = "Teacher's Screen";
-                // Clear the current video to avoid stale last frame; new camera stream will arrive via ontrack
-                if (this.teacherVideo) {
-                    try {
-                        this.teacherVideo.pause();
-                    } catch (_) {}
-                    this.teacherVideo.srcObject = null;
-                    // Force a repaint so the next incoming camera stream attaches cleanly
-                    this.teacherVideo.load();
+                const teacherId = this.currentTeacherId || (screenData ? screenData.teacherId : null);
+                const pc = teacherId ? this.peers[teacherId] : null;
+                if (pc) {
+                    const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
+                    if (receiver && receiver.track) {
+                        const stream = new MediaStream([receiver.track]);
+                        this.teacherVideo.srcObject = stream;
+                        try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
+                    }
                 }
             }
         }
