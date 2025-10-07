@@ -69,6 +69,7 @@ html, body {
     padding: 1rem;
     overflow: hidden;
     height: calc(100vh - 140px);
+    min-height: 0;
 }
 
 /* Teacher Section - Only for Students */
