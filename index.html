@@ -123,6 +123,15 @@
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
     </script>
+    <!-- Optional TURN configuration for reliable connectivity over the internet -->
+    <script>
+        // Provide valid TURN credentials from your provider.
+        // Example using Metered TURN; replace USERNAME and PASSWORD.
+        window.TURN_CONFIG = window.TURN_CONFIG || [
+            // { urls: 'turn:global.relay.metered.ca:80', username: 'USERNAME', credential: 'PASSWORD' },
+            // { urls: 'turns:global.relay.metered.ca:443', username: 'USERNAME', credential: 'PASSWORD' }
+        ];
+    </script>
     
     <script src="script.js"></script>
 </body>

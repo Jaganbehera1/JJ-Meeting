@@ -28,9 +28,6 @@ class VirtualClassroom {
         this.screenSharingTeacherId = null;
         this.currentTeacherId = null;
         
-        // Track connection attempts to prevent duplicates
-        this.connectionAttempts = new Map();
-        
         this.initializeApp();
     }
 
@@ -111,10 +108,10 @@ class VirtualClassroom {
             }
 
             this.localStream = await navigator.mediaDevices.getUserMedia(constraints);
-            console.log('✅ Local stream initialized with tracks:', this.localStream.getTracks().length);
+            
             return this.localStream;
         } catch (error) {
-            console.error('❌ Error accessing media devices:', error);
+            console.error('Error accessing media devices:', error);
             if (error.name === 'NotReadableError') {
                 alert('Camera or microphone is already in use by another application. Please close other applications using your camera/microphone and try again.');
             } else if (error.name === 'NotAllowedError') {
@@ -152,17 +149,14 @@ class VirtualClassroom {
             // Show/hide sections based on role
             this.updateUIBasedOnRole();
             
-            // Clean up old room data first
-            await this.cleanupOldRoomData();
-            
             // Initialize Firebase and WebRTC
             await this.initializeFirebase();
             this.setupFirebaseListeners();
             
-            console.log(`✅ Joined room ${this.roomId} as ${this.userName}`);
+            console.log(`Joined room ${this.roomId} as ${this.userName}`);
             
         } catch (error) {
-            console.error('❌ Error joining room:', error);
+            console.error('Error joining room:', error);
         }
     }
 
@@ -178,33 +172,11 @@ class VirtualClassroom {
         }
     }
 
-    async cleanupOldRoomData() {
-        try {
-            // Only clear stale incoming signals for this user; do NOT remove the entire room
-            const mySignalsRef = database.ref(`rooms/${this.roomId}/signals/${this.userId}`);
-            await mySignalsRef.remove();
-            console.log('🧹 Cleared my stale incoming signals');
-
-            // If teacher joins and room has no participants yet, optionally clear room-level transient data
-            if (this.userRole === 'teacher') {
-                const participantsSnap = await database.ref(`rooms/${this.roomId}/participants`).once('value');
-                if (!participantsSnap.exists()) {
-                    // Clean transient signaling/screenShare but keep structure
-                    await database.ref(`rooms/${this.roomId}/signals`).remove().catch(() => {});
-                    await database.ref(`rooms/${this.roomId}/screenShare`).set({ active: false }).catch(() => {});
-                    console.log('🧹 Teacher prepped empty room (cleared signals, reset screenShare)');
-                }
-            }
-        } catch (error) {
-            console.log('ℹ️ No old signals to clean up or error:', error);
-        }
-    }
-
     async initializeFirebase() {
         const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
         
-        // Set complete user data with proper structure
-        const userData = {
+        // Set user data
+        await userRef.set({
             name: this.userName,
             role: this.userRole,
             videoEnabled: this.isVideoOn,
@@ -213,12 +185,7 @@ class VirtualClassroom {
             handRaised: this.isHandRaised,
             joinedAt: firebase.database.ServerValue.TIMESTAMP,
             lastActive: firebase.database.ServerValue.TIMESTAMP
-        };
-
-        console.log('💾 Saving user data to Firebase:', userData);
-        
-        // Set user data
-        await userRef.set(userData);
+        });
 
         // Set up onDisconnect for user removal
         userRef.onDisconnect().remove();
@@ -233,8 +200,6 @@ class VirtualClassroom {
     }
 
     setupFirebaseListeners() {
-        console.log('🔌 Setting up Firebase listeners...');
-        
         // Listen for participants
         this.participantsRef = database.ref(`rooms/${this.roomId}/participants`);
         this.participantsRef.on('child_added', (snapshot) => {
@@ -249,8 +214,8 @@ class VirtualClassroom {
             this.handleParticipantLeft(snapshot);
         });
 
-        // Listen for WebRTC signals targeted to this user
-        this.signalsRef = database.ref(`rooms/${this.roomId}/signals/${this.userId}`);
+        // Listen for WebRTC signals
+        this.signalsRef = database.ref(`rooms/${this.roomId}/signals`);
         this.signalsRef.on('child_added', (snapshot) => {
             this.handleSignal(snapshot);
         });
@@ -261,57 +226,22 @@ class VirtualClassroom {
             this.handleScreenShareUpdate(snapshot);
         });
 
-        // Connect to existing participants after a delay
-        setTimeout(() => {
-            this.connectToExistingParticipants();
-        }, 3000);
+        // Find current teacher
+        this.findCurrentTeacher();
     }
 
-    async connectToExistingParticipants() {
-        try {
-            const participantsSnapshot = await this.participantsRef.once('value');
-            const participants = participantsSnapshot.val();
-
-            if (!participants) {
-                console.log('👥 No existing participants found');
-                return;
-            }
-
-            console.log(`👥 Found ${Object.keys(participants).length} existing participants`);
-
+    async findCurrentTeacher() {
+        const participantsSnapshot = await this.participantsRef.once('value');
+        const participants = participantsSnapshot.val();
+        
+        if (participants) {
             for (const [participantId, participantData] of Object.entries(participants)) {
-                if (participantId === this.userId) continue;
-
-                // Skip if already connected or attempting to connect
-                if (this.peers[participantId] || this.connectionAttempts.has(participantId)) {
-                    console.log(`🔗 Already connected/connecting to ${participantId}, skipping`);
-                    continue;
-                }
-
-                const participantName = participantData.name;
-                const participantRole = participantData.role;
-
-                console.log(`👤 Processing existing participant: ${participantName} (${participantRole})`);
-
-                // Student connects to teacher
-                if (this.userRole === 'student' && participantRole === 'teacher') {
-                    console.log(`🎓 Student connecting to teacher: ${participantName}`);
-                    this.connectionAttempts.set(participantId, true);
-                    await this.createPeerConnection(participantId, true);
+                if (participantData.role === 'teacher' && participantId !== this.userId) {
                     this.currentTeacherId = participantId;
-                }
-                // Teacher connects to students
-                else if (this.userRole === 'teacher' && participantRole === 'student') {
-                    console.log(`👨‍🏫 Teacher connecting to student: ${participantName}`);
-                    this.connectionAttempts.set(participantId, true);
-                    await this.createPeerConnection(participantId, true);
-                    this.addParticipantToGrid(participantId, participantData);
+                    console.log(`Found teacher: ${participantData.name} (${participantId})`);
+                    break;
                 }
             }
-
-            this.updateParticipantsCount();
-        } catch (error) {
-            console.error('❌ Error connecting to existing participants:', error);
         }
     }
 
@@ -321,30 +251,24 @@ class VirtualClassroom {
 
         if (participantId === this.userId) return;
 
-        const participantName = participantData.name;
-        const participantRole = participantData.role;
+        console.log(`Participant joined: ${participantData.name}, role: ${participantData.role}`);
 
-        console.log(`👋 Participant joined: ${participantName}, role: ${participantRole}`);
-
-        // Skip if already connected or attempting to connect
-        if (this.peers[participantId] || this.connectionAttempts.has(participantId)) {
-            console.log(`🔗 Already connected/connecting to ${participantId}, skipping`);
-            return;
-        }
-
-        // Student connects to teacher
-        if (this.userRole === 'student' && participantRole === 'teacher') {
-            console.log(`🎓 Student connecting to new teacher: ${participantName}`);
-            this.connectionAttempts.set(participantId, true);
-            await this.createPeerConnection(participantId, true);
+        // Update teacher reference if this is a teacher
+        if (participantData.role === 'teacher') {
             this.currentTeacherId = participantId;
         }
-        // Teacher connects to students
-        else if (this.userRole === 'teacher' && participantRole === 'student') {
-            console.log(`👨‍🏫 Teacher connecting to new student: ${participantName}`);
-            this.connectionAttempts.set(participantId, true);
+
+        // Determine connection type based on roles
+        if (this.userRole === 'teacher' && participantData.role === 'student') {
+            // Teacher connecting to student
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
+            } else if (this.userRole === 'student' && participantData.role === 'teacher') {
+                // Student connecting to teacher — student should NOT be initiator (avoids glare)
+                await this.createPeerConnection(participantId, false);
+            } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
+            // Another teacher joined - handle accordingly
+            console.log('Another teacher joined the room');
         }
 
         this.updateParticipantsCount();
@@ -375,8 +299,6 @@ class VirtualClassroom {
         const participantId = snapshot.key;
         const participantData = snapshot.val();
         
-        console.log(`👋 Participant left: ${participantData?.name} (${participantId})`);
-        
         // Close peer connection
         this.closePeerConnection(participantId);
         
@@ -392,17 +314,30 @@ class VirtualClassroom {
                 this.teacherTitle.textContent = "Teacher's Screen";
             }
             this.currentTeacherId = null;
+            this.findCurrentTeacher();
         }
         
         this.updateParticipantsCount();
     }
 
-    async createPeerConnection(peerId, isInitiator) {
-        console.log(`🔗 Creating peer connection with ${peerId}, initiator: ${isInitiator}`);
+    waitForLocalStream(peerId) {
+      const interval = setInterval(() => {
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(track => {
+            if (this.peers[peerId]) {
+              this.peers[peerId].addTrack(track, this.localStream);
+            }
+          });
+          clearInterval(interval);
+        }
+      }, 500);
+    }
 
+    async createPeerConnection(peerId, isInitiator) {
+        console.log(`Creating peer connection with ${peerId}, initiator: ${isInitiator}`);
+        
         // Close existing connection if any
         if (this.peers[peerId]) {
-            console.log(`🔄 Closing existing connection with ${peerId}`);
             this.closePeerConnection(peerId);
         }
 
@@ -414,79 +349,71 @@ class VirtualClassroom {
 
         // Add current stream tracks
         const currentStream = this.isScreenSharing && this.screenStream ? this.screenStream : this.localStream;
+        if (!currentStream) {
+          console.warn('No local stream available yet — will attach later.');
+          this.waitForLocalStream(peerId);
+        }
+
         if (currentStream) {
-            console.log(`📹 Adding ${currentStream.getTracks().length} tracks to peer ${peerId}`);
             currentStream.getTracks().forEach(track => {
-                if (track.readyState === 'live') {
-                    try {
-                        peerConnection.addTrack(track, currentStream);
-                    } catch (error) {
-                        console.log(`ℹ️ Track already added to ${peerId}`);
-                    }
-                }
+                peerConnection.addTrack(track, currentStream);
             });
         }
 
-        // Track if we've already processed streams for this connection
-        let streamsProcessed = false;
-
-        // Handle incoming stream - FIXED: Prevent duplicate stream processing
+        // Handle incoming stream
         peerConnection.ontrack = (event) => {
-            if (streamsProcessed) {
-                console.log(`⏭️ Stream already processed for ${peerId}, skipping`);
-                return;
-            }
-            streamsProcessed = true;
-            
-            console.log('📹 Received remote stream from:', peerId);
-            const [remoteStream] = event.streams;
-            if (remoteStream) {
-                this.handleRemoteStream(peerId, remoteStream);
-            }
+          const [remoteStream] = event.streams;
+          if (!remoteStream) return;
+          this.handleRemoteStream(peerId, remoteStream);
+          // Force refresh
+          const videoEl = document.querySelector(`#participant-${peerId} video, #teacherVideo`);
+          if (videoEl) {
+            videoEl.srcObject = remoteStream;
+            videoEl.play().catch(e => console.warn('Autoplay blocked:', e));
+          }
         };
 
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log(`🧊 Sending ICE candidate to ${peerId}`);
-                this.sendSignal(peerId, {
-                    type: 'ice-candidate',
-                    candidate: event.candidate
-                });
+                const candidate = event.candidate;
+                if (candidate.candidate && candidate.sdpMid !== null && candidate.sdpMLineIndex !== null) {
+                    console.log(`Sending ICE candidate to ${peerId}`);
+                    this.sendSignal(peerId, {
+                        type: 'ice-candidate',
+                        candidate: {
+                            candidate: candidate.candidate,
+                            sdpMid: candidate.sdpMid,
+                            sdpMLineIndex: candidate.sdpMLineIndex
+                        }
+                    });
+                }
             }
         };
 
         // Handle connection state changes
         peerConnection.onconnectionstatechange = () => {
-            console.log(`🔗 Connection state with ${peerId}: ${peerConnection.connectionState}`);
+            console.log(`Connection state with ${peerId}: ${peerConnection.connectionState}`);
             
             if (peerConnection.connectionState === 'connected') {
                 console.log(`✅ Successfully connected to ${peerId}`);
+                // Clear ICE candidate queue on successful connection
                 this.iceCandidateQueue.delete(peerId);
-                this.connectionAttempts.delete(peerId);
             } else if (peerConnection.connectionState === 'failed') {
-                console.log(`❌ Connection failed with ${peerId}`);
-                this.connectionAttempts.delete(peerId);
+                console.log(`❌ Connection with ${peerId} failed`);
+                // Attempt to restart connection after a delay
                 setTimeout(() => {
                     this.restartConnection(peerId);
-                }, 5000);
-            } else if (peerConnection.connectionState === 'closed') {
-                console.log(`🔒 Connection closed with ${peerId}`);
-                this.connectionAttempts.delete(peerId);
-                if (this.peers[peerId] === peerConnection) {
-                    delete this.peers[peerId];
-                    this.iceCandidateQueue.delete(peerId);
-                }
+                }, 2000);
             }
         };
 
         // Create initial offer if initiator
         if (isInitiator) {
             try {
-                console.log(`📨 Creating initial offer for ${peerId}`);
-                
-                // Wait a bit to ensure everything is ready
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                console.log(`Creating initial offer for ${peerId}`);
+                // Small delay to ensure everything is ready
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -495,11 +422,8 @@ class VirtualClassroom {
                     type: 'offer',
                     offer: offer
                 });
-                
-                console.log(`✅ Offer created and sent to ${peerId}`);
             } catch (error) {
-                console.error('❌ Error creating initial offer:', error);
-                this.connectionAttempts.delete(peerId);
+                console.error('Error creating initial offer:', error);
             }
         }
 
@@ -507,37 +431,28 @@ class VirtualClassroom {
     }
 
     async restartConnection(peerId) {
-        console.log(`🔄 Restarting connection with ${peerId}`);
-        
+        console.log(`Restarting connection with ${peerId}`);
         this.closePeerConnection(peerId);
         
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Re-fetch participant data
+        const participantRef = database.ref(`rooms/${this.roomId}/participants/${peerId}`);
+        const snapshot = await participantRef.once('value');
+        const participantData = snapshot.val();
         
-        try {
-            const participantRef = database.ref(`rooms/${this.roomId}/participants/${peerId}`);
-            const snapshot = await participantRef.once('value');
-            const participantData = snapshot.val();
+        if (participantData) {
+            // Recreate connection with same initiator logic
+            const isTeacherToStudent = this.userRole === 'teacher' && participantData.role === 'student';
+            const isStudentToTeacher = this.userRole === 'student' && participantData.role === 'teacher';
             
-            if (participantData && !this.connectionAttempts.has(peerId)) {
-                const participantRole = participantData.role;
-                const shouldReconnect = 
-                    (this.userRole === 'teacher' && participantRole === 'student') ||
-                    (this.userRole === 'student' && participantRole === 'teacher');
-                
-                if (shouldReconnect) {
-                    console.log(`🔄 Reconnecting to ${participantData.name}`);
-                    this.connectionAttempts.set(peerId, true);
-                    await this.createPeerConnection(peerId, true);
-                }
+            if (isTeacherToStudent || isStudentToTeacher) {
+                await this.createPeerConnection(peerId, true);
             }
-        } catch (error) {
-            console.error(`❌ Error restarting connection with ${peerId}:`, error);
-            this.connectionAttempts.delete(peerId);
         }
     }
 
     async handleSignal(snapshot) {
         const signalData = snapshot.val();
+        const signalId = snapshot.key;
         const fromUserId = signalData.from;
         
         // Remove signal after processing
@@ -545,41 +460,37 @@ class VirtualClassroom {
 
         if (fromUserId === this.userId) return;
 
+        // Check if we've already processed this signal
         const signalKey = `${fromUserId}_${signalData.type}_${signalData.timestamp}`;
         if (this.pendingSignals.has(signalKey)) {
-            console.log('⏭️ Skipping duplicate signal:', signalKey);
+            console.log('Skipping duplicate signal:', signalKey);
             return;
         }
 
         this.pendingSignals.add(signalKey);
         
+        // Clean up old signals
         setTimeout(() => {
             this.pendingSignals.delete(signalKey);
         }, 10000);
 
         const { type, offer, answer, candidate } = signalData;
 
-        console.log(`📨 Received ${type} signal from ${fromUserId}`);
-
         try {
             let peerConnection = this.peers[fromUserId];
             
-            if (!peerConnection && !this.connectionAttempts.has(fromUserId)) {
-                console.log(`🔗 Creating new peer connection for signal from ${fromUserId}`);
-                
+            if (!peerConnection) {
+                // Create a new peer connection for valid role combinations
                 const participantRef = database.ref(`rooms/${this.roomId}/participants/${fromUserId}`);
                 const snapshot = await participantRef.once('value');
                 const participantData = snapshot.val();
                 
                 if (participantData) {
-                    const participantRole = participantData.role;
-                    const shouldConnect = 
-                        (this.userRole === 'teacher' && participantRole === 'student') ||
-                        (this.userRole === 'student' && participantRole === 'teacher');
-                    
-                    if (shouldConnect) {
-                        this.connectionAttempts.set(fromUserId, true);
-                        peerConnection = await this.createPeerConnection(fromUserId, false);
+                    const isTeacherToStudent = this.userRole === 'teacher' && participantData.role === 'student';
+                    const isStudentToTeacher = this.userRole === 'student' && participantData.role === 'teacher';
+                    if (isTeacherToStudent || isStudentToTeacher) {
+                      const initiator = this.userRole === 'teacher';
+                      peerConnection = await this.createPeerConnection(fromUserId, initiator);
                     }
                 }
             }
@@ -587,38 +498,52 @@ class VirtualClassroom {
             if (peerConnection) {
                 switch (type) {
                     case 'offer':
-                        console.log(`📨 Processing offer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
-                        if (peerConnection.signalingState === 'stable' || peerConnection.signalingState === 'have-remote-offer') {
+                        console.log(`Received offer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
+
+                        // If we currently have a local offer (glare), rollback first
+                        if (peerConnection.signalingState === 'have-local-offer') {
+                            try {
+                                console.log('Glare detected — rolling back local offer to accept remote offer');
+                                // Rollback local description so we can accept the incoming offer
+                                await peerConnection.setLocalDescription({ type: 'rollback' });
+                            } catch (rbErr) {
+                                console.warn('Rollback failed (may not be supported in some browsers):', rbErr);
+                            }
+                        }
+                    
+                        // Now set remote description and answer
+                        try {
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
                             const answerResponse = await peerConnection.createAnswer();
                             await peerConnection.setLocalDescription(answerResponse);
-                            
+                        
                             this.sendSignal(fromUserId, {
                                 type: 'answer',
                                 answer: answerResponse
                             });
-                            
-                            console.log(`✅ Sent answer to ${fromUserId}`);
+                        
+                            // Process any queued ICE candidates
                             this.processQueuedIceCandidates(fromUserId, peerConnection);
+                        } catch (err) {
+                            console.error('Error handling incoming offer after glare handling:', err);
                         }
                         break;
                         
                     case 'answer':
-                        console.log(`📨 Processing answer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
-                        if (peerConnection.signalingState === 'have-local-offer' || peerConnection.signalingState === 'stable') {
+                        console.log(`Received answer from ${fromUserId}, current state: ${peerConnection.signalingState}`);
+                        
+                        if (peerConnection.signalingState === 'have-local-offer') {
                             await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-                            console.log(`✅ Set remote description from ${fromUserId}`);
                             this.processQueuedIceCandidates(fromUserId, peerConnection);
                         }
                         break;
                         
                     case 'ice-candidate':
-                        if (candidate) {
+                        if (candidate && candidate.candidate && candidate.sdpMid !== null && candidate.sdpMLineIndex !== null) {
                             if (peerConnection.remoteDescription) {
                                 await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                                console.log(`🧊 Added ICE candidate from ${fromUserId}`);
                             } else {
-                                console.log(`⏳ Queuing ICE candidate from ${fromUserId}`);
+                                console.log(`Queuing ICE candidate from ${fromUserId}`);
                                 const queue = this.iceCandidateQueue.get(fromUserId) || [];
                                 queue.push(candidate);
                                 this.iceCandidateQueue.set(fromUserId, queue);
@@ -628,21 +553,20 @@ class VirtualClassroom {
                 }
             }
         } catch (error) {
-            console.error('❌ Error handling signal:', error);
+            console.error('Error handling signal:', error);
             this.pendingSignals.delete(signalKey);
-            this.connectionAttempts.delete(fromUserId);
         }
     }
 
     async processQueuedIceCandidates(peerId, peerConnection) {
         const queue = this.iceCandidateQueue.get(peerId);
         if (queue && queue.length > 0) {
-            console.log(`🧊 Processing ${queue.length} queued ICE candidates for ${peerId}`);
+            console.log(`Processing ${queue.length} queued ICE candidates for ${peerId}`);
             for (const candidate of queue) {
                 try {
                     await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
                 } catch (error) {
-                    console.error('❌ Error adding queued ICE candidate:', error);
+                    console.error('Error adding queued ICE candidate:', error);
                 }
             }
             this.iceCandidateQueue.set(peerId, []);
@@ -653,103 +577,153 @@ class VirtualClassroom {
         signal.from = this.userId;
         signal.timestamp = Date.now();
         
-        const signalRef = database.ref(`rooms/${this.roomId}/signals/${toUserId}`).push();
+        const signalRef = database.ref(`rooms/${this.roomId}/signals`).push();
         signalRef.set(signal);
         
-        console.log(`📨 Sent ${signal.type} signal to ${toUserId}`);
-        
         setTimeout(() => {
-            signalRef.remove().catch(() => {});
+            signalRef.remove().catch(error => {
+                console.log('Signal already removed:', error);
+            });
         }, 30000);
     }
 
     handleRemoteStream(peerId, stream) {
-        console.log(`📹 Handling remote stream from ${peerId}`);
-
+        console.log(`Handling remote stream from ${peerId}`);
+        
         database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
             const participantData = snapshot.val();
             if (participantData) {
-                const participantName = participantData.name;
-                const participantRole = participantData.role;
-
-                if (this.userRole === 'student' && participantRole === 'teacher') {
+                if (this.userRole === 'student' && participantData.role === 'teacher') {
                     // Student receiving teacher's stream
-                    console.log(`🎓 Student: Setting teacher video stream from ${participantName}`);
                     this.teacherVideo.srcObject = stream;
-                    this.teacherVideo.style.display = 'block';
-                    
-                    this.teacherVideo.onloadedmetadata = () => {
-                        console.log(`🎓 Teacher video metadata loaded`);
-                        this.teacherVideo.play().catch(e => console.log('Play error:', e));
-                    };
-                    
-                    this.teacherVideo.oncanplay = () => {
-                        console.log(`🎓 Teacher video can play`);
-                    };
-                    
-                    this.teacherTitle.textContent = `${participantName}'s Screen`;
+                    this.teacherTitle.textContent = `${participantData.name}'s Screen`;
                     if (participantData.screenSharing) {
-                        this.teacherTitle.textContent = `${participantName} - Screen Sharing`;
+                        this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
                     }
-                    
-                } else if (this.userRole === 'teacher' && participantRole === 'student') {
+                } else if (this.userRole === 'teacher' && participantData.role === 'student') {
                     // Teacher receiving student's stream
-                    console.log(`👨‍🏫 Teacher: Showing student video from ${participantName}`);
-                    this.showParticipantVideo(peerId, stream, participantData);
+                    this.showParticipantVideo(peerId, stream);
                 }
             }
         }).catch(error => {
-            console.error('❌ Error checking participant data:', error);
+            console.error('Error checking participant data:', error);
         });
     }
 
-    showParticipantVideo(peerId, stream, participantData) {
+    showParticipantVideo(peerId, stream) {
         let participantCard = document.getElementById(`participant-${peerId}`);
         
         if (!participantCard) {
+            // Create participant card if it doesn't exist
             participantCard = document.createElement('div');
             participantCard.className = 'participant-card';
             participantCard.id = `participant-${peerId}`;
             
-            const participantName = participantData.name;
-            
-            participantCard.innerHTML = `
-                <video class="participant-video" autoplay playsinline></video>
-                <div class="participant-info">
-                    <span class="participant-name">${participantName}</span>
-                    <div class="participant-status">
-                        <span class="status-icon ${participantData.videoEnabled ? '' : 'status-muted'}">📹</span>
-                        <span class="status-icon ${participantData.audioEnabled ? '' : 'status-muted'}">🎤</span>
-                        ${participantData.handRaised ? '<span class="status-icon hand-raised">✋</span>' : ''}
-                    </div>
-                </div>
-            `;
-            
-            const videoElement = participantCard.querySelector('.participant-video');
-            if (videoElement) {
-                videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
-                videoElement.onloadedmetadata = () => {
-                    console.log(`📹 Student video metadata loaded for ${participantName}`);
-                    videoElement.play().catch(e => console.log('Play error:', e));
-                };
-                
-                videoElement.oncanplay = () => {
-                    console.log(`📹 Student video can play for ${participantName}`);
-                };
-            }
-            
-            this.participantsGrid.appendChild(participantCard);
-            this.updateParticipantsCount();
-            console.log(`✅ Added student ${participantName} to grid`);
+            // Get participant data for name
+            database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
+                const participantData = snapshot.val();
+                if (participantData) {
+                    participantCard.innerHTML = `
+                        <video class="participant-video" autoplay playsinline></video>
+                        <div class="participant-info">
+                            <span class="participant-name">${participantData.name}</span>
+                            <div class="participant-status">
+                                <span class="status-icon ${participantData.videoEnabled ? '' : 'status-muted'}">📹</span>
+                                <span class="status-icon ${participantData.audioEnabled ? '' : 'status-muted'}">🎤</span>
+                                ${participantData.handRaised ? '<span class="status-icon hand-raised">✋</span>' : ''}
+                            </div>
+                        </div>
+                    `;
+                    
+                    const videoElement = participantCard.querySelector('.participant-video');
+                    if (videoElement) {
+                        videoElement.srcObject = stream;
+                        videoElement.onloadedmetadata = () => {
+                            videoElement.play().catch(e => console.log('Play error:', e));
+                        };
+                    }
+                    
+                    this.participantsGrid.appendChild(participantCard);
+                    this.updateParticipantsCount();
+                }
+            });
         } else {
             // Update existing participant card
             const videoElement = participantCard.querySelector('.participant-video');
             if (videoElement) {
                 videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
             }
         }
+    }
+
+    // Replace all video tracks in existing peer connections with screen share
+    async replaceAllVideoTracks(newStream) {
+        const videoTrack = newStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+
+        for (const [peerId, peerConnection] of Object.entries(this.peers)) {
+            try {
+                const sender = peerConnection.getSenders().find(s => 
+                    s.track && s.track.kind === 'video'
+                );
+                
+                if (sender) {
+                    await sender.replaceTrack(videoTrack);
+                } else {
+                    peerConnection.addTrack(videoTrack, newStream);
+                }
+            } catch (error) {
+                console.error(`Error replacing track for peer ${peerId}:`, error);
+            }
+        }
+    }
+
+    // Switch all video tracks back to camera
+    async switchBackToCamera() {
+        console.log("Switching back to camera...");
+    
+        // Ensure local camera stream exists
+        if (!this.localStream || this.localStream.getVideoTracks().length === 0) {
+            console.log("Reinitializing camera after screen share stop...");
+            this.localStream = await this.initializeLocalStream();
+        }
+    
+        const cameraVideoTrack = this.localStream.getVideoTracks()[0];
+        if (!cameraVideoTrack) {
+            console.warn("No camera video track found!");
+            return;
+        }
+    
+        for (const [peerId, peerConnection] of Object.entries(this.peers)) {
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                console.log(`Replacing video track for peer ${peerId}`);
+                await sender.replaceTrack(cameraVideoTrack);
+            
+                // ✅ Force a keyframe to refresh remote display
+                if (sender.track && sender.track.requestFrame) {
+                    sender.track.requestFrame();
+                } else if (sender.sendEncodings && sender.sendEncodings.length) {
+                    // Some browsers (Chrome) can trigger keyframe this way
+                    try {
+                        await sender.setParameters(sender.getParameters());
+                    } catch (err) {
+                        console.warn("Keyframe trigger not supported:", err);
+                    }
+                }
+            
+                // 🚀 Optional: force re-offer only if remote doesn’t refresh
+                setTimeout(async () => {
+                    if (peerConnection.connectionState === 'connected') {
+                        const offer = await peerConnection.createOffer();
+                        await peerConnection.setLocalDescription(offer);
+                        this.sendSignal(peerId, { type: 'offer', offer });
+                    }
+                }, 500);
+            }
+        }
+    
+        console.log("Camera track replaced for all peers.");
     }
 
     // UI Management
@@ -761,12 +735,7 @@ class VirtualClassroom {
         participantCard.id = `participant-${participantId}`;
 
         participantCard.innerHTML = `
-            <div class="video-placeholder">
-                <div class="placeholder-content">
-                    <div class="placeholder-icon">👤</div>
-                    <div>Waiting for video...</div>
-                </div>
-            </div>
+            <video class="participant-video" autoplay playsinline></video>
             <div class="participant-info">
                 <span class="participant-name">${participantData.name}</span>
                 <div class="participant-status">
@@ -794,6 +763,7 @@ class VirtualClassroom {
                 audioIcon.classList.toggle('status-muted', !participantData.audioEnabled);
             }
             
+            // Handle raise hand
             let handIcon = participantCard.querySelector('.hand-raised');
             if (participantData.handRaised && !handIcon) {
                 const newHandIcon = document.createElement('span');
@@ -823,12 +793,11 @@ class VirtualClassroom {
             this.peers[peerId].close();
             delete this.peers[peerId];
             this.iceCandidateQueue.delete(peerId);
-            this.connectionAttempts.delete(peerId);
-            console.log(`🔒 Closed connection with ${peerId}`);
+            console.log(`Closed connection with ${peerId}`);
         }
     }
 
-    // Media Controls (remaining methods same as before)
+    // Media Controls (keep all media control methods the same as before)
     async toggleVideo() {
         if (!this.localStream) return;
 
@@ -868,11 +837,6 @@ class VirtualClassroom {
                     audio: true
                 });
 
-                const videoTrack = this.screenStream.getVideoTracks()[0];
-                if (!videoTrack) {
-                    throw new Error('No video track in screen share stream');
-                }
-
                 await this.replaceAllVideoTracks(this.screenStream);
                 this.isScreenSharing = true;
 
@@ -883,9 +847,9 @@ class VirtualClassroom {
                     startedAt: firebase.database.ServerValue.TIMESTAMP
                 });
 
+                const videoTrack = this.screenStream.getVideoTracks()[0];
                 videoTrack.onended = () => {
                     this.stopScreenShare();
-                    this.updateScreenShareButton();
                 };
 
             } else {
@@ -896,70 +860,53 @@ class VirtualClassroom {
             this.updateUserStatus();
 
         } catch (error) {
-            console.error('❌ Error sharing screen:', error);
-            if (error.name !== 'NotAllowedError') {
-                alert('Error sharing screen: ' + error.message);
-            }
+            console.error('Error sharing screen:', error);
         }
     }
 
-    async stopScreenShare() {
-        if (this.screenStream) {
-            this.screenStream.getTracks().forEach(track => track.stop());
-            this.screenStream = null;
-        }
+     async stopScreenShare() {
+         console.log("Stopping screen share...");
+ 
+         // Stop all screen share tracks
+         if (this.screenStream) {
+             this.screenStream.getTracks().forEach(track => track.stop());
+             this.screenStream = null;
+         }
+ 
+         // Mark state first so students clear frozen frame immediately
+         await database.ref(`rooms/${this.roomId}/screenShare`).set({
+             active: false,
+             teacherId: null,
+             teacherName: null,
+             endedAt: firebase.database.ServerValue.TIMESTAMP
+         });
+ 
+         // Clear teacher video for students (will be restored by incoming camera ontrack)
+         if (this.userRole === 'teacher') {
+             if (this.teacherVideo) {
+                 try { this.teacherVideo.pause(); } catch (_) {}
+                 this.teacherVideo.srcObject = null;
+                 this.teacherVideo.load();
+             }
+         }
+ 
+         // Switch back to camera and update tracks to peers
+         await this.switchBackToCamera();
+         this.isScreenSharing = false;
+         this.updateScreenShareButton();
+ 
+         // Restore teacher’s local preview element
+         if (this.userRole === 'teacher' && this.localStream) {
+             const localVideo = document.getElementById('teacherVideo');
+             if (localVideo) {
+                 localVideo.srcObject = this.localStream;
+                 try { localVideo.play().catch(() => {}); } catch (_) {}
+             }
+         }
+ 
+         console.log("Screen share stopped and camera restored.");
+     }
 
-        await this.switchBackToCamera();
-        this.isScreenSharing = false;
-
-        await database.ref(`rooms/${this.roomId}/screenShare`).set({
-            active: false
-        });
-
-        this.updateUserStatus();
-    }
-
-    async replaceAllVideoTracks(newStream) {
-        const videoTrack = newStream.getVideoTracks()[0];
-        if (!videoTrack) return;
-
-        for (const [peerId, peerConnection] of Object.entries(this.peers)) {
-            try {
-                const sender = peerConnection.getSenders().find(s => 
-                    s.track && s.track.kind === 'video'
-                );
-                
-                if (sender) {
-                    await sender.replaceTrack(videoTrack);
-                } else {
-                    peerConnection.addTrack(videoTrack, newStream);
-                }
-            } catch (error) {
-                console.error(`❌ Error replacing track for peer ${peerId}:`, error);
-            }
-        }
-    }
-
-    async switchBackToCamera() {
-        if (!this.localStream) return;
-
-        const cameraVideoTrack = this.localStream.getVideoTracks()[0];
-        if (!cameraVideoTrack) return;
-
-        for (const [peerId, peerConnection] of Object.entries(this.peers)) {
-            try {
-                const sender = peerConnection.getSenders().find(s => 
-                    s.track && s.track.kind === 'video'
-                );
-                
-                if (sender) {
-                    await sender.replaceTrack(cameraVideoTrack);
-                }
-            } catch (error) {
-                console.error(`❌ Error switching to camera for peer ${peerId}:`, error);
-            }
-        }
-    }
 
     async toggleRaiseHand() {
         this.isHandRaised = !this.isHandRaised;
@@ -969,16 +916,25 @@ class VirtualClassroom {
 
     handleScreenShareUpdate(snapshot) {
         const screenData = snapshot.val();
-        
         if (screenData && screenData.active && screenData.teacherId !== this.userId) {
             this.screenSharingTeacherId = screenData.teacherId;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = `${screenData.teacherName} - Screen Sharing`;
             }
         } else if (!screenData || !screenData.active) {
+            // Screen share ended – clear any frozen frame and reset title for students
             this.screenSharingTeacherId = null;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = "Teacher's Screen";
+                // Clear the current video to avoid stale last frame; new camera stream will arrive via ontrack
+                if (this.teacherVideo) {
+                    try {
+                        this.teacherVideo.pause();
+                    } catch (_) {}
+                    this.teacherVideo.srcObject = null;
+                    // Force a repaint so the next incoming camera stream attaches cleanly
+                    this.teacherVideo.load();
+                }
             }
         }
     }
