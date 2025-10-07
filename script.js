@@ -28,9 +28,6 @@ class VirtualClassroom {
         this.screenSharingTeacherId = null;
         this.currentTeacherId = null;
         
-        // Firebase database reference
-        this.db = null;
-        
         this.initializeApp();
     }
 
@@ -41,7 +38,6 @@ class VirtualClassroom {
     initializeApp() {
         this.initializeElements();
         this.setupEventListeners();
-        this.initializeFirebase();
     }
 
     initializeElements() {
@@ -78,6 +74,7 @@ class VirtualClassroom {
         // Control buttons
         this.videoToggle.addEventListener('click', () => this.toggleVideo());
         this.audioToggle.addEventListener('click', () => this.toggleAudio());
+        console.log(`Toggling screen share: ${!this.isScreenSharing ? 'START' : 'STOP'}`);
         this.screenShareBtn.addEventListener('click', () => this.toggleScreenShare());
         this.raiseHandBtn.addEventListener('click', () => this.toggleRaiseHand());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
@@ -87,22 +84,6 @@ class VirtualClassroom {
         this.userNameInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.joinRoom();
         });
-    }
-
-    initializeFirebase() {
-        try {
-            // Check if Firebase is available
-            if (typeof firebase !== 'undefined' && firebase.apps.length > 0) {
-                this.db = firebase.database();
-                console.log('Firebase initialized successfully');
-            } else {
-                console.error('Firebase is not available');
-                // Retry after a short delay
-                setTimeout(() => this.initializeFirebase(), 1000);
-            }
-        } catch (error) {
-            console.error('Error initializing Firebase:', error);
-        }
     }
 
     async initializeLocalStream(constraints = null) {
@@ -158,13 +139,6 @@ class VirtualClassroom {
             return;
         }
 
-        // Check if Firebase is initialized
-        if (!this.db) {
-            alert('Firebase is not initialized. Please wait a moment and try again.');
-            this.initializeFirebase();
-            return;
-        }
-
         try {
             await this.initializeLocalStream();
             
@@ -177,14 +151,13 @@ class VirtualClassroom {
             this.updateUIBasedOnRole();
             
             // Initialize Firebase and WebRTC
-            await this.initializeFirebaseData();
+            await this.initializeFirebase();
             this.setupFirebaseListeners();
             
             console.log(`Joined room ${this.roomId} as ${this.userName}`);
             
         } catch (error) {
             console.error('Error joining room:', error);
-            alert('Error joining room: ' + error.message);
         }
     }
 
@@ -200,12 +173,8 @@ class VirtualClassroom {
         }
     }
 
-    async initializeFirebaseData() {
-        if (!this.db) {
-            throw new Error('Firebase database is not available');
-        }
-
-        const userRef = this.db.ref(`rooms/${this.roomId}/participants/${this.userId}`);
+    async initializeFirebase() {
+        const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
         
         // Set user data
         await userRef.set({
@@ -224,7 +193,7 @@ class VirtualClassroom {
 
         // Set up onDisconnect for screen sharing if teacher
         if (this.userRole === 'teacher') {
-            const screenShareRef = this.db.ref(`rooms/${this.roomId}/screenShare`);
+            const screenShareRef = database.ref(`rooms/${this.roomId}/screenShare`);
             screenShareRef.onDisconnect().set({
                 active: false
             });
@@ -232,13 +201,8 @@ class VirtualClassroom {
     }
 
     setupFirebaseListeners() {
-        if (!this.db) {
-            console.error('Firebase database not available for listeners');
-            return;
-        }
-
         // Listen for participants
-        this.participantsRef = this.db.ref(`rooms/${this.roomId}/participants`);
+        this.participantsRef = database.ref(`rooms/${this.roomId}/participants`);
         this.participantsRef.on('child_added', (snapshot) => {
             this.handleParticipantJoined(snapshot);
         });
@@ -252,13 +216,13 @@ class VirtualClassroom {
         });
 
         // Listen for WebRTC signals
-        this.signalsRef = this.db.ref(`rooms/${this.roomId}/signals`);
+        this.signalsRef = database.ref(`rooms/${this.roomId}/signals`);
         this.signalsRef.on('child_added', (snapshot) => {
             this.handleSignal(snapshot);
         });
 
         // Listen for screen sharing
-        this.screenShareRef = this.db.ref(`rooms/${this.roomId}/screenShare`);
+        this.screenShareRef = database.ref(`rooms/${this.roomId}/screenShare`);
         this.screenShareRef.on('value', (snapshot) => {
             this.handleScreenShareUpdate(snapshot);
         });
@@ -268,8 +232,6 @@ class VirtualClassroom {
     }
 
     async findCurrentTeacher() {
-        if (!this.participantsRef) return;
-
         const participantsSnapshot = await this.participantsRef.once('value');
         const participants = participantsSnapshot.val();
         
@@ -278,11 +240,6 @@ class VirtualClassroom {
                 if (participantData.role === 'teacher' && participantId !== this.userId) {
                     this.currentTeacherId = participantId;
                     console.log(`Found teacher: ${participantData.name} (${participantId})`);
-                    
-                    // If student finds teacher, initiate connection
-                    if (this.userRole === 'student') {
-                        await this.createPeerConnection(participantId, true);
-                    }
                     break;
                 }
             }
@@ -300,11 +257,6 @@ class VirtualClassroom {
         // Update teacher reference if this is a teacher
         if (participantData.role === 'teacher') {
             this.currentTeacherId = participantId;
-            
-            // Student should connect to teacher
-            if (this.userRole === 'student') {
-                await this.createPeerConnection(participantId, true);
-            }
         }
 
         // Determine connection type based on roles
@@ -312,6 +264,12 @@ class VirtualClassroom {
             // Teacher connecting to student
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
+        } else if (this.userRole === 'student' && participantData.role === 'teacher') {
+            // Student connecting to teacher
+            await this.createPeerConnection(participantId, true);
+        } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
+            // Another teacher joined - handle accordingly
+            console.log('Another teacher joined the room');
         }
 
         this.updateParticipantsCount();
@@ -342,6 +300,8 @@ class VirtualClassroom {
         const participantId = snapshot.key;
         const participantData = snapshot.val();
         
+        console.log(`Participant left: ${participantData?.name} (${participantId})`);
+        
         // Close peer connection
         this.closePeerConnection(participantId);
         
@@ -358,6 +318,11 @@ class VirtualClassroom {
             }
             this.currentTeacherId = null;
             this.findCurrentTeacher();
+            
+            // Clear screen share if this teacher was sharing
+            if (this.screenSharingTeacherId === participantId) {
+                this.screenSharingTeacherId = null;
+            }
         }
         
         this.updateParticipantsCount();
@@ -453,10 +418,8 @@ class VirtualClassroom {
         console.log(`Restarting connection with ${peerId}`);
         this.closePeerConnection(peerId);
         
-        if (!this.db) return;
-        
         // Re-fetch participant data
-        const participantRef = this.db.ref(`rooms/${this.roomId}/participants/${peerId}`);
+        const participantRef = database.ref(`rooms/${this.roomId}/participants/${peerId}`);
         const snapshot = await participantRef.once('value');
         const participantData = snapshot.val();
         
@@ -473,6 +436,7 @@ class VirtualClassroom {
 
     async handleSignal(snapshot) {
         const signalData = snapshot.val();
+        const signalId = snapshot.key;
         const fromUserId = signalData.from;
         
         // Remove signal after processing
@@ -501,9 +465,7 @@ class VirtualClassroom {
             
             if (!peerConnection) {
                 // Create a new peer connection for valid role combinations
-                if (!this.db) return;
-                
-                const participantRef = this.db.ref(`rooms/${this.roomId}/participants/${fromUserId}`);
+                const participantRef = database.ref(`rooms/${this.roomId}/participants/${fromUserId}`);
                 const snapshot = await participantRef.once('value');
                 const participantData = snapshot.val();
                 
@@ -582,15 +544,10 @@ class VirtualClassroom {
     }
 
     sendSignal(toUserId, signal) {
-        if (!this.db) {
-            console.error('Cannot send signal: Firebase database not available');
-            return;
-        }
-
         signal.from = this.userId;
         signal.timestamp = Date.now();
         
-        const signalRef = this.db.ref(`rooms/${this.roomId}/signals`).push();
+        const signalRef = database.ref(`rooms/${this.roomId}/signals`).push();
         signalRef.set(signal);
         
         setTimeout(() => {
@@ -603,15 +560,12 @@ class VirtualClassroom {
     handleRemoteStream(peerId, stream) {
         console.log(`Handling remote stream from ${peerId}`);
         
-        if (!this.db) return;
-        
-        this.db.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
+        database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
             const participantData = snapshot.val();
             if (participantData) {
                 if (this.userRole === 'student' && participantData.role === 'teacher') {
                     // Student receiving teacher's stream
                     this.teacherVideo.srcObject = stream;
-                    this.teacherVideo.style.display = 'block';
                     this.teacherTitle.textContent = `${participantData.name}'s Screen`;
                     if (participantData.screenSharing) {
                         this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
@@ -635,10 +589,8 @@ class VirtualClassroom {
             participantCard.className = 'participant-card';
             participantCard.id = `participant-${peerId}`;
             
-            if (!this.db) return;
-            
             // Get participant data for name
-            this.db.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
+            database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
                 const participantData = snapshot.val();
                 if (participantData) {
                     participantCard.innerHTML = `
@@ -656,7 +608,6 @@ class VirtualClassroom {
                     const videoElement = participantCard.querySelector('.participant-video');
                     if (videoElement) {
                         videoElement.srcObject = stream;
-                        videoElement.style.display = 'block';
                         videoElement.onloadedmetadata = () => {
                             videoElement.play().catch(e => console.log('Play error:', e));
                         };
@@ -671,7 +622,6 @@ class VirtualClassroom {
             const videoElement = participantCard.querySelector('.participant-video');
             if (videoElement) {
                 videoElement.srcObject = stream;
-                videoElement.style.display = 'block';
             }
         }
     }
@@ -679,17 +629,24 @@ class VirtualClassroom {
     // Replace all video tracks in existing peer connections with screen share
     async replaceAllVideoTracks(newStream) {
         const videoTrack = newStream.getVideoTracks()[0];
-        if (!videoTrack) return;
+        if (!videoTrack) {
+            console.error('No video track in the new stream');
+            return;
+        }
+
+        console.log(`Replacing video tracks with new stream for ${Object.keys(this.peers).length} peers`);
 
         for (const [peerId, peerConnection] of Object.entries(this.peers)) {
             try {
                 const sender = peerConnection.getSenders().find(s => 
                     s.track && s.track.kind === 'video'
                 );
-                
+
                 if (sender) {
+                    console.log(`Replacing track for peer ${peerId}`);
                     await sender.replaceTrack(videoTrack);
                 } else {
+                    console.log(`Adding track for peer ${peerId}`);
                     peerConnection.addTrack(videoTrack, newStream);
                 }
             } catch (error) {
@@ -700,11 +657,19 @@ class VirtualClassroom {
 
     // Switch all video tracks back to camera
     async switchBackToCamera() {
-        if (!this.localStream) return;
-
+        if (!this.localStream) {
+            console.warn('No local stream available when switching back to camera');
+            return;
+        }
+    
         const cameraVideoTrack = this.localStream.getVideoTracks()[0];
-        if (!cameraVideoTrack) return;
-
+        if (!cameraVideoTrack) {
+            console.warn('No camera video track available');
+            return;
+        }
+    
+        console.log('Switching back to camera for all peers');
+    
         for (const [peerId, peerConnection] of Object.entries(this.peers)) {
             try {
                 const sender = peerConnection.getSenders().find(s => 
@@ -712,7 +677,11 @@ class VirtualClassroom {
                 );
                 
                 if (sender) {
+                    console.log(`Replacing video track for peer ${peerId}`);
                     await sender.replaceTrack(cameraVideoTrack);
+                } else {
+                    console.log(`Adding video track for peer ${peerId}`);
+                    peerConnection.addTrack(cameraVideoTrack, this.localStream);
                 }
             } catch (error) {
                 console.error(`Error switching to camera for peer ${peerId}:`, error);
@@ -729,12 +698,7 @@ class VirtualClassroom {
         participantCard.id = `participant-${participantId}`;
 
         participantCard.innerHTML = `
-            <div class="participant-placeholder">
-                <div class="placeholder-content">
-                    <div class="placeholder-icon">👤</div>
-                    <p>${participantData.name}</p>
-                </div>
-            </div>
+            <video class="participant-video" autoplay playsinline></video>
             <div class="participant-info">
                 <span class="participant-name">${participantData.name}</span>
                 <div class="participant-status">
@@ -796,7 +760,7 @@ class VirtualClassroom {
         }
     }
 
-    // Media Controls
+    // Media Controls (keep all media control methods the same as before)
     async toggleVideo() {
         if (!this.localStream) return;
 
@@ -831,32 +795,43 @@ class VirtualClassroom {
 
         try {
             if (!this.isScreenSharing) {
+                // Start screen sharing
                 this.screenStream = await navigator.mediaDevices.getDisplayMedia({
                     video: { cursor: 'always' },
                     audio: true
                 });
 
+                // Check if we got a video track
+                const videoTrack = this.screenStream.getVideoTracks()[0];
+                if (!videoTrack) {
+                    throw new Error('No video track in screen share stream');
+                }
+
                 await this.replaceAllVideoTracks(this.screenStream);
                 this.isScreenSharing = true;
 
-                if (!this.db) {
-                    console.error('Cannot update screen share: Firebase not available');
-                    return;
-                }
-
-                await this.db.ref(`rooms/${this.roomId}/screenShare`).set({
+                // Update Firebase
+                await database.ref(`rooms/${this.roomId}/screenShare`).set({
                     active: true,
                     teacherId: this.userId,
                     teacherName: this.userName,
                     startedAt: firebase.database.ServerValue.TIMESTAMP
                 });
 
-                const videoTrack = this.screenStream.getVideoTracks()[0];
+                // Handle when user stops screen share via browser controls
                 videoTrack.onended = () => {
+                    console.log('Stopping screen share, current state:', {
+                    isScreenSharing: this.isScreenSharing,
+                    hasScreenStream: !!this.screenStream,
+                    peerCount: Object.keys(this.peers).length
+                });
+                    console.log('Screen share ended by browser controls');
                     this.stopScreenShare();
+                    this.updateScreenShareButton();
                 };
 
             } else {
+                // Stop screen sharing
                 await this.stopScreenShare();
             }
 
@@ -865,24 +840,39 @@ class VirtualClassroom {
 
         } catch (error) {
             console.error('Error sharing screen:', error);
+            if (error.name !== 'NotAllowedError') {
+                alert('Error sharing screen: ' + error.message);
+            }
         }
     }
+        
+        async stopScreenShare() {
+            console.log('Stopping screen share...');
 
-    async stopScreenShare() {
-        if (this.screenStream) {
-            this.screenStream.getTracks().forEach(track => track.stop());
-            this.screenStream = null;
+            // Stop screen stream tracks
+            if (this.screenStream) {
+                this.screenStream.getTracks().forEach(track => {
+                    track.stop();
+                    console.log('Stopped screen track:', track.kind);
+                });
+                this.screenStream = null;
+            }
+        
+            // Switch all video tracks back to camera
+            await this.switchBackToCamera();
+            this.isScreenSharing = false;
+        
+            // Update Firebase screen share status
+            await database.ref(`rooms/${this.roomId}/screenShare`).set({
+                active: false,
+                stoppedAt: firebase.database.ServerValue.TIMESTAMP
+            });
+        
+            // Force UI update for all participants
+            this.updateUserStatus();
+
+            console.log('Screen share stopped successfully');
         }
-
-        await this.switchBackToCamera();
-        this.isScreenSharing = false;
-
-        if (!this.db) return;
-
-        await this.db.ref(`rooms/${this.roomId}/screenShare`).set({
-            active: false
-        });
-    }
 
     async toggleRaiseHand() {
         this.isHandRaised = !this.isHandRaised;
@@ -892,14 +882,37 @@ class VirtualClassroom {
 
     handleScreenShareUpdate(snapshot) {
         const screenData = snapshot.val();
+        console.log('Screen share update:', screenData);
+
         if (screenData && screenData.active && screenData.teacherId !== this.userId) {
             this.screenSharingTeacherId = screenData.teacherId;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = `${screenData.teacherName} - Screen Sharing`;
+                console.log('Screen sharing started by teacher:', screenData.teacherName);
             }
         } else if (!screenData || !screenData.active) {
+            this.screenSharingTeacherId = null;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = "Teacher's Screen";
+                console.log('Screen sharing stopped');
+
+                // Clear any frozen video frame by reloading the video element
+                if (this.teacherVideo.srcObject) {
+                    // This helps clear the last frame
+                    this.teacherVideo.srcObject = null;
+                    // The stream will be re-established automatically via WebRTC
+                }
+            }
+        }
+    }
+    // Add this method to your class
+    refreshTeacherVideo() {
+        if (this.userRole === 'student' && this.teacherVideo) {
+            // Temporarily clear and let WebRTC re-establish the stream
+            const currentSrc = this.teacherVideo.srcObject;
+            if (currentSrc) {
+                this.teacherVideo.srcObject = null;
+                // The ontrack event will set the new stream when it arrives
             }
         }
     }
@@ -935,12 +948,7 @@ class VirtualClassroom {
     }
 
     async updateUserStatus() {
-        if (!this.db) {
-            console.error('Cannot update user status: Firebase not available');
-            return;
-        }
-
-        const userRef = this.db.ref(`rooms/${this.roomId}/participants/${this.userId}`);
+        const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
         await userRef.update({
             videoEnabled: this.isVideoOn,
             audioEnabled: this.isAudioOn,
@@ -967,13 +975,11 @@ class VirtualClassroom {
             if (this.signalsRef) this.signalsRef.off();
             if (this.screenShareRef) this.screenShareRef.off();
 
-            if (this.db) {
-                const userRef = this.db.ref(`rooms/${this.roomId}/participants/${this.userId}`);
-                await userRef.remove();
+            const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
+            await userRef.remove();
 
-                if (this.userRole === 'teacher' && this.isScreenSharing) {
-                    await this.db.ref(`rooms/${this.roomId}/screenShare`).set({ active: false });
-                }
+            if (this.userRole === 'teacher' && this.isScreenSharing) {
+                await database.ref(`rooms/${this.roomId}/screenShare`).set({ active: false });
             }
 
             location.reload();

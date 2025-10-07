@@ -104,7 +104,7 @@ html, body {
     height: 100%;
     object-fit: contain;
     background: #000;
-    display: none;
+    /* display: none; */
 }
 
 .video-placeholder {
@@ -186,7 +186,7 @@ html, body {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    display: none;
+    /* display: none; */
 }
 
 .participant-placeholder {
