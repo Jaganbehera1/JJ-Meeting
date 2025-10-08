@@ -286,6 +286,7 @@ class VirtualClassroom {
             });
         }
     }
+    
 
     setupFirebaseListeners() {
         // Listen for participants
@@ -354,32 +355,36 @@ class VirtualClassroom {
     async handleParticipantJoined(snapshot) {
         const participantData = snapshot.val();
         const participantId = snapshot.key;
-
+    
         if (participantId === this.userId) return;
-
+    
         console.log(`Participant joined: ${participantData.name}, role: ${participantData.role}`);
-
+    
         // Update teacher reference if this is a teacher
         if (participantData.role === 'teacher') {
             this.currentTeacherId = participantId;
+            console.log(`Found teacher: ${participantData.name}`);
         }
-
+    
         // Determine connection type based on roles
         if (this.userRole === 'teacher' && participantData.role === 'student') {
+            console.log(`Teacher: Creating connection to student ${participantData.name}`);
             await this.createPeerConnection(participantId, true);
             this.addParticipantToGrid(participantId, participantData);
         } else if (this.userRole === 'student' && participantData.role === 'teacher') {
+            console.log(`Student: Creating connection to teacher ${participantData.name}`);
             await this.createPeerConnection(participantId, false);
+            // IMPORTANT: Don't add teacher to grid, teacher goes to teacher section
         } else if (this.userRole === 'student' && participantData.role === 'student') {
             // Student-to-student connection: deterministic initiator to avoid glare
             const isInitiator = this.userId < participantId;
+            console.log(`Student: Creating connection to peer student ${participantData.name}, initiator: ${isInitiator}`);
             await this.createPeerConnection(participantId, isInitiator);
             this.addParticipantToGrid(participantId, participantData);
         } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
-            // Another teacher joined - handle accordingly
             console.log('Another teacher joined the room');
         }
-
+    
         this.updateParticipantsCount();
     }
 
@@ -449,39 +454,45 @@ class VirtualClassroom {
         if (this.peers[peerId]) {
             this.closePeerConnection(peerId);
         }
-
+    
         const peerConnection = new RTCPeerConnection(this.rtcConfig);
         this.peers[peerId] = peerConnection;
-
+    
         // Initialize ICE candidate queue for this peer
         this.iceCandidateQueue.set(peerId, []);
-
-        // Add current stream tracks
-        const currentStream = this.isScreenSharing && this.screenStream ? this.screenStream : this.localStream;
-        if (!currentStream) {
-          console.warn('No local stream available yet — will attach later.');
-          this.waitForLocalStream(peerId);
+    
+        // Add current stream tracks - handle both screen share and camera
+        let streamToAdd = null;
+        
+        if (this.isScreenSharing && this.screenStream) {
+            streamToAdd = this.screenStream;
+            console.log(`Adding screen share stream to peer ${peerId}`);
+        } else if (this.localStream) {
+            streamToAdd = this.localStream;
+            console.log(`Adding local camera stream to peer ${peerId}`);
         }
-
-        if (currentStream) {
-            currentStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, currentStream);
+    
+        if (streamToAdd) {
+            streamToAdd.getTracks().forEach(track => {
+                console.log(`Adding ${track.kind} track to peer ${peerId}`);
+                peerConnection.addTrack(track, streamToAdd);
             });
+        } else {
+            console.warn('No local stream available yet — will attach later.');
+            this.waitForLocalStream(peerId);
         }
-
+    
         // Handle incoming stream
         peerConnection.ontrack = (event) => {
-          const [remoteStream] = event.streams;
-          if (!remoteStream) return;
-          this.handleRemoteStream(peerId, remoteStream);
-          // Force refresh
-          const videoEl = document.querySelector(`#participant-${peerId} video, #teacherVideo`);
-          if (videoEl) {
-            videoEl.srcObject = remoteStream;
-            videoEl.play().catch(e => console.warn('Autoplay blocked:', e));
-          }
+            console.log(`Received track from ${peerId}, streams:`, event.streams.length);
+            const [remoteStream] = event.streams;
+            if (!remoteStream) return;
+            
+            console.log(`Remote stream has ${remoteStream.getTracks().length} tracks`);
+            this.handleRemoteStream(peerId, remoteStream);
         };
-
+    
+        // Rest of the method remains the same...
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
@@ -499,7 +510,7 @@ class VirtualClassroom {
                 }
             }
         };
-
+    
         // Handle connection state changes
         peerConnection.onconnectionstatechange = () => {
             console.log(`Connection state with ${peerId}: ${peerConnection.connectionState}`);
@@ -516,13 +527,13 @@ class VirtualClassroom {
                 }, 2000);
             }
         };
-
+    
         // Create initial offer if initiator
         if (isInitiator) {
             try {
                 console.log(`Creating initial offer for ${peerId}`);
                 // Small delay to ensure everything is ready
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -531,11 +542,13 @@ class VirtualClassroom {
                     type: 'offer',
                     offer: offer
                 });
+                
+                console.log(`Offer created and sent to ${peerId}`);
             } catch (error) {
                 console.error('Error creating initial offer:', error);
             }
         }
-
+    
         return peerConnection;
     }
 
@@ -706,30 +719,46 @@ class VirtualClassroom {
         
         database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
             const participantData = snapshot.val();
-            if (participantData) {
-                if (this.userRole === 'student' && participantData.role === 'teacher') {
-                    // Student receiving teacher's stream - ONLY show in teacher video section
-                    console.log(`Student ${this.userId} receiving teacher's stream from ${peerId}, screenSharing: ${participantData.screenSharing}`);
-                    this.teacherVideo.srcObject = stream;
-                    this.teacherTitle.textContent = `${participantData.name}'s Screen`;
-                    if (participantData.screenSharing) {
-                        this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
-                    }
-                    // Force play the video
-                    try {
-                        this.teacherVideo.play().catch(e => console.log('Video play error:', e));
-                    } catch (e) {
-                        console.log('Video play error:', e);
-                    }
-                } else if (this.userRole === 'teacher' && participantData.role === 'student') {
-                    // Teacher receiving student's stream - show in participants grid ONLY
-                    console.log(`Teacher receiving student's stream from ${peerId}`);
-                    this.showParticipantVideo(peerId, stream);
-                } else if (this.userRole === 'student' && participantData.role === 'student') {
-                    // Student receiving another student's stream - show in participants grid
-                    console.log(`Student receiving another student's stream from ${peerId}`);
-                    this.showParticipantVideo(peerId, stream);
+            if (!participantData) return;
+    
+            console.log(`Stream from: ${participantData.name}, role: ${participantData.role}, my role: ${this.userRole}`);
+    
+            if (this.userRole === 'student' && participantData.role === 'teacher') {
+                // Student receiving teacher's stream - ONLY show in teacher video section
+                console.log(`Student: Setting teacher video from ${participantData.name}`);
+                
+                // Clear any existing streams first
+                if (this.teacherVideo.srcObject) {
+                    this.teacherVideo.srcObject.getTracks().forEach(track => track.stop());
                 }
+                
+                this.teacherVideo.srcObject = stream;
+                this.teacherTitle.textContent = `${participantData.name}'s Screen`;
+                
+                if (participantData.screenSharing) {
+                    this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
+                }
+                
+                // Force play the video
+                this.teacherVideo.onloadedmetadata = () => {
+                    this.teacherVideo.play().catch(e => {
+                        console.log('Teacher video play error:', e);
+                        // Try again with user interaction
+                        document.addEventListener('click', () => {
+                            this.teacherVideo.play().catch(console.error);
+                        }, { once: true });
+                    });
+                };
+                
+            } else if (this.userRole === 'teacher' && participantData.role === 'student') {
+                // Teacher receiving student's stream - show in participants grid ONLY
+                console.log(`Teacher: Adding student ${participantData.name} to grid`);
+                this.showParticipantVideo(peerId, stream);
+                
+            } else if (this.userRole === 'student' && participantData.role === 'student') {
+                // Student receiving another student's stream - show in participants grid
+                console.log(`Student: Adding peer student ${participantData.name} to grid`);
+                this.showParticipantVideo(peerId, stream);
             }
         }).catch(error => {
             console.error('Error checking participant data:', error);
@@ -781,11 +810,16 @@ class VirtualClassroom {
             }
         }
     }
-
+    
     // Replace all video tracks in existing peer connections with screen share
     async replaceAllVideoTracks(newStream) {
         const videoTrack = newStream.getVideoTracks()[0];
-        if (!videoTrack) return;
+        if (!videoTrack) {
+            console.error('No video track in screen share stream');
+            return;
+        }
+
+        console.log(`Replacing video tracks for ${Object.keys(this.peers).length} peers with screen share`);
 
         for (const [peerId, peerConnection] of Object.entries(this.peers)) {
             try {
@@ -794,14 +828,24 @@ class VirtualClassroom {
                 );
                 
                 if (sender) {
+                    console.log(`Replacing video track for peer ${peerId}`);
                     await sender.replaceTrack(videoTrack);
                 } else {
+                    console.log(`Adding new video track for peer ${peerId}`);
                     peerConnection.addTrack(videoTrack, newStream);
                 }
+                
+                // Force renegotiation
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                this.sendSignal(peerId, { type: 'offer', offer });
+                
             } catch (error) {
                 console.error(`Error replacing track for peer ${peerId}:`, error);
             }
         }
+        
+        console.log('All video tracks replaced with screen share');
     }
 
     // Switch all video tracks back to camera
@@ -1093,6 +1137,8 @@ class VirtualClassroom {
 
     handleScreenShareUpdate(snapshot) {
         const screenData = snapshot.val();
+        console.log('Screen share update:', screenData);
+        
         if (screenData && screenData.active && screenData.teacherId !== this.userId) {
             this.screenSharingTeacherId = screenData.teacherId;
             if (this.userRole === 'student') {
@@ -1100,23 +1146,22 @@ class VirtualClassroom {
                 console.log(`Student ${this.userId} - Screen sharing active from teacher ${screenData.teacherId}`);
             }
         } else if (!screenData || !screenData.active) {
-            // Screen share ended – ensure students see the teacher's camera again
+            // Screen share ended
             this.screenSharingTeacherId = null;
             if (this.userRole === 'student') {
                 this.teacherTitle.textContent = "Teacher's Screen";
-                console.log(`Student ${this.userId} - Screen sharing ended, restoring teacher video`);
+                console.log(`Student ${this.userId} - Screen sharing ended`);
                 
-                // Don't override the teacher video here - let handleRemoteStream handle it
-                // The teacher's camera stream should already be in teacherVideo from handleRemoteStream
-                if (this.teacherVideo && this.teacherVideo.srcObject) {
-                    try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
-                }
+                // The teacher's camera stream should automatically come through handleRemoteStream
+                // when the teacher switches back to camera
             } else if (this.userRole === 'teacher') {
-                // Teacher should see their own local video, not remote streams
-                if (this.localStream) {
+                // Teacher should see their own local video
+                if (this.localStream && this.teacherVideo) {
                     this.teacherVideo.srcObject = this.localStream;
                     this.teacherTitle.textContent = `${this.userName}'s Screen`;
-                    try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
+                    try { 
+                        this.teacherVideo.play().catch(e => console.log('Teacher video play error:', e)); 
+                    } catch (_) {}
                 }
             }
         }
