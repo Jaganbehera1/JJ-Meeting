@@ -626,14 +626,17 @@ class VirtualClassroom {
             const participantData = snapshot.val();
             if (participantData) {
                 if (this.userRole === 'student' && participantData.role === 'teacher') {
-                    // Student receiving teacher's stream
+                    // Student receiving teacher's stream - ONLY show in teacher video section
                     this.teacherVideo.srcObject = stream;
                     this.teacherTitle.textContent = `${participantData.name}'s Screen`;
                     if (participantData.screenSharing) {
                         this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
                     }
-                } else if (participantData.role === 'student') {
-                    // Any participant receiving a student stream -> show in grid
+                } else if (this.userRole === 'teacher' && participantData.role === 'student') {
+                    // Teacher receiving student's stream - show in participants grid
+                    this.showParticipantVideo(peerId, stream);
+                } else if (this.userRole === 'student' && participantData.role === 'student') {
+                    // Student receiving another student's stream - show in participants grid
                     this.showParticipantVideo(peerId, stream);
                 }
             }
@@ -893,6 +896,17 @@ class VirtualClassroom {
 
         } catch (error) {
             console.error('Error sharing screen:', error);
+            if (error.name === 'NotAllowedError') {
+                alert('Screen sharing was denied. Please allow screen sharing to continue.');
+            } else if (error.name === 'AbortError') {
+                console.log('Screen sharing was cancelled by user');
+            } else {
+                alert('Failed to start screen sharing. Please try again.');
+            }
+            
+            // Reset state if screen sharing failed
+            this.isScreenSharing = false;
+            this.updateScreenShareButton();
         }
     }
 
