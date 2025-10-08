@@ -11,6 +11,8 @@ class VirtualClassroom {
         this.userName = '';
         this.userRole = 'student';
         this.roomId = '';
+        this.processedStreams = new Set();
+        this.connectionAttempts = new Map();
         
         // WebRTC
         this.peers = {};
@@ -434,33 +436,45 @@ class VirtualClassroom {
         this.updateParticipantsCount();
     }
 
-    waitForLocalStream(peerId) {
-      const interval = setInterval(() => {
-        if (this.localStream) {
-          this.localStream.getTracks().forEach(track => {
-            if (this.peers[peerId]) {
-              this.peers[peerId].addTrack(track, this.localStream);
-            }
-          });
-          clearInterval(interval);
-        }
-      }, 500);
-    }
+    waitForLocalStream(peerId, attemptKey) {
+        const interval = setInterval(() => {
+          // Check if this connection attempt is still valid
+          if (this.connectionAttempts.get(peerId) !== attemptKey) {
+            clearInterval(interval);
+            return;
+          }
+          
+          if (this.localStream && this.peers[peerId]) {
+            this.localStream.getTracks().forEach(track => {
+              if (this.peers[peerId] && this.connectionAttempts.get(peerId) === attemptKey) {
+                this.peers[peerId].addTrack(track, this.localStream);
+              }
+            });
+            clearInterval(interval);
+          }
+        }, 500);
+      }
 
+
+    // Update createPeerConnection to track attempts
     async createPeerConnection(peerId, isInitiator) {
         console.log(`Creating peer connection with ${peerId}, initiator: ${isInitiator}`);
+        
+        // Track connection attempts
+        const attemptKey = `${peerId}_${Date.now()}`;
+        this.connectionAttempts.set(peerId, attemptKey);
         
         // Close existing connection if any
         if (this.peers[peerId]) {
             this.closePeerConnection(peerId);
         }
-    
+
         const peerConnection = new RTCPeerConnection(this.rtcConfig);
         this.peers[peerId] = peerConnection;
-    
+
         // Initialize ICE candidate queue for this peer
         this.iceCandidateQueue.set(peerId, []);
-    
+
         // Add current stream tracks - handle both screen share and camera
         let streamToAdd = null;
         
@@ -471,31 +485,49 @@ class VirtualClassroom {
             streamToAdd = this.localStream;
             console.log(`Adding local camera stream to peer ${peerId}`);
         }
-    
+
         if (streamToAdd) {
             streamToAdd.getTracks().forEach(track => {
                 console.log(`Adding ${track.kind} track to peer ${peerId}`);
-                peerConnection.addTrack(track, streamToAdd);
+                // Check if this connection attempt is still valid
+                if (this.connectionAttempts.get(peerId) === attemptKey) {
+                    peerConnection.addTrack(track, streamToAdd);
+                }
             });
         } else {
             console.warn('No local stream available yet — will attach later.');
-            this.waitForLocalStream(peerId);
+            // Modified waitForLocalStream to check connection validity
+            this.waitForLocalStream(peerId, attemptKey);
         }
-    
-        // Handle incoming stream
+
+        // Handle incoming stream with duplicate prevention
         peerConnection.ontrack = (event) => {
+            // Check if this connection attempt is still valid
+            if (this.connectionAttempts.get(peerId) !== attemptKey) {
+                console.log(`Skipping track from old connection attempt for ${peerId}`);
+                return;
+            }
+            
             console.log(`Received track from ${peerId}, streams:`, event.streams.length);
             const [remoteStream] = event.streams;
             if (!remoteStream) return;
             
+            // Check if we've already processed this stream
+            const streamKey = `${peerId}_${remoteStream.id}`;
+            if (this.processedStreams.has(streamKey)) {
+                console.log(`Skipping duplicate stream from ${peerId}`);
+                return;
+            }
+            
+            this.processedStreams.add(streamKey);
             console.log(`Remote stream has ${remoteStream.getTracks().length} tracks`);
             this.handleRemoteStream(peerId, remoteStream);
         };
-    
-        // Rest of the method remains the same...
+
+        // Rest of the ICE candidate and connection state handling remains the same...
         // Handle ICE candidates
         peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
+            if (event.candidate && this.connectionAttempts.get(peerId) === attemptKey) {
                 const candidate = event.candidate;
                 if (candidate.candidate && candidate.sdpMid !== null && candidate.sdpMLineIndex !== null) {
                     console.log(`Sending ICE candidate to ${peerId}`);
@@ -510,7 +542,7 @@ class VirtualClassroom {
                 }
             }
         };
-    
+
         // Handle connection state changes
         peerConnection.onconnectionstatechange = () => {
             console.log(`Connection state with ${peerId}: ${peerConnection.connectionState}`);
@@ -519,21 +551,26 @@ class VirtualClassroom {
                 console.log(`✅ Successfully connected to ${peerId}`);
                 // Clear ICE candidate queue on successful connection
                 this.iceCandidateQueue.delete(peerId);
-            } else if (peerConnection.connectionState === 'failed') {
-                console.log(`❌ Connection with ${peerId} failed`);
-                // Attempt to restart connection after a delay
-                setTimeout(() => {
-                    this.restartConnection(peerId);
-                }, 2000);
+            } else if (peerConnection.connectionState === 'failed' || 
+                    peerConnection.connectionState === 'disconnected' ||
+                    peerConnection.connectionState === 'closed') {
+                console.log(`❌ Connection with ${peerId} ${peerConnection.connectionState}`);
+                
+                // Only restart if this is the current connection attempt
+                if (this.connectionAttempts.get(peerId) === attemptKey) {
+                    setTimeout(() => {
+                        this.restartConnection(peerId);
+                    }, 2000);
+                }
             }
         };
-    
+
         // Create initial offer if initiator
-        if (isInitiator) {
+        if (isInitiator && this.connectionAttempts.get(peerId) === attemptKey) {
             try {
                 console.log(`Creating initial offer for ${peerId}`);
-                // Small delay to ensure everything is ready
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Smaller delay
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
@@ -548,7 +585,7 @@ class VirtualClassroom {
                 console.error('Error creating initial offer:', error);
             }
         }
-    
+
         return peerConnection;
     }
 
@@ -709,6 +746,22 @@ class VirtualClassroom {
         }, 30000);
     }
 
+    // Add this method to ensure teacher video is displayed correctly
+    ensureTeacherVideoDisplay() {
+        if (this.userRole === 'student' && this.currentTeacherId) {
+            const teacherPeer = this.peers[this.currentTeacherId];
+            if (teacherPeer && this.teacherVideo.srcObject === null) {
+                // Try to get the stream from the peer connection
+                const receiver = teacherPeer.getReceivers().find(r => r.track);
+                if (receiver && receiver.track) {
+                    const stream = new MediaStream([receiver.track]);
+                    this.teacherVideo.srcObject = stream;
+                    this.teacherVideo.play().catch(console.error);
+                }
+            }
+        }
+    }
+
     handleRemoteStream(peerId, stream) {
         console.log(`Handling remote stream from ${peerId}`);
         
@@ -727,10 +780,10 @@ class VirtualClassroom {
                 // Student receiving teacher's stream - ONLY show in teacher video section
                 console.log(`Student: Setting teacher video from ${participantData.name}`);
                 
-                // Clear any existing streams first
-                if (this.teacherVideo.srcObject) {
-                    this.teacherVideo.srcObject.getTracks().forEach(track => track.stop());
-                }
+                // REMOVE THIS - Don't stop existing tracks as it breaks the connection
+                // if (this.teacherVideo.srcObject) {
+                //     this.teacherVideo.srcObject.getTracks().forEach(track => track.stop());
+                // }
                 
                 this.teacherVideo.srcObject = stream;
                 this.teacherTitle.textContent = `${participantData.name}'s Screen`;
@@ -743,10 +796,6 @@ class VirtualClassroom {
                 this.teacherVideo.onloadedmetadata = () => {
                     this.teacherVideo.play().catch(e => {
                         console.log('Teacher video play error:', e);
-                        // Try again with user interaction
-                        document.addEventListener('click', () => {
-                            this.teacherVideo.play().catch(console.error);
-                        }, { once: true });
                     });
                 };
                 
@@ -966,6 +1015,16 @@ class VirtualClassroom {
 
     closePeerConnection(peerId) {
         if (this.peers[peerId]) {
+            // Remove from connection attempts
+            this.connectionAttempts.delete(peerId);
+            
+            // Remove processed streams for this peer
+            for (const key of this.processedStreams) {
+                if (key.startsWith(peerId + '_')) {
+                    this.processedStreams.delete(key);
+                }
+            }
+            
             this.peers[peerId].close();
             delete this.peers[peerId];
             this.iceCandidateQueue.delete(peerId);
@@ -973,6 +1032,7 @@ class VirtualClassroom {
         }
     }
 
+    
     // Media Controls (keep all media control methods the same as before)
     async toggleVideo() {
         if (!this.localStream) return;
@@ -1005,55 +1065,54 @@ class VirtualClassroom {
             alert('Only teachers can share their screen.');
             return;
         }
-
+    
         try {
             if (!this.isScreenSharing) {
                 this.screenStream = await navigator.mediaDevices.getDisplayMedia({
                     video: { cursor: 'always' },
                     audio: true
                 });
-
-                await this.replaceAllVideoTracks(this.screenStream);
-                this.isScreenSharing = true;
-
-                // Update teacher's local video to show screen share
+    
+                // Update local display first
                 if (this.teacherVideo) {
                     this.teacherVideo.srcObject = this.screenStream;
                     this.teacherTitle.textContent = `${this.userName} - Screen Sharing`;
                 }
-
+    
+                // Then update all peers
+                await this.replaceAllVideoTracks(this.screenStream);
+                this.isScreenSharing = true;
+    
                 await database.ref(`rooms/${this.roomId}/screenShare`).set({
                     active: true,
                     teacherId: this.userId,
                     teacherName: this.userName,
                     startedAt: firebase.database.ServerValue.TIMESTAMP
                 });
-
+    
                 const videoTrack = this.screenStream.getVideoTracks()[0];
                 videoTrack.onended = () => {
                     this.stopScreenShare();
                 };
-
+    
             } else {
                 await this.stopScreenShare();
             }
-
+    
             this.updateScreenShareButton();
             this.updateUserStatus();
-
+    
         } catch (error) {
             console.error('Error sharing screen:', error);
-            if (error.name === 'NotAllowedError') {
-                alert('Screen sharing was denied. Please allow screen sharing to continue.');
-            } else if (error.name === 'AbortError') {
-                console.log('Screen sharing was cancelled by user');
-            } else {
-                alert('Failed to start screen sharing. Please try again.');
-            }
-            
             // Reset state if screen sharing failed
             this.isScreenSharing = false;
             this.updateScreenShareButton();
+            
+            // Restore camera view
+            if (this.localStream && this.teacherVideo) {
+                this.teacherVideo.srcObject = this.localStream;
+                this.teacherTitle.textContent = `${this.userName}'s Screen`;
+            }
         }
     }
 
