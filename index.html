@@ -37,6 +37,21 @@
                 </div>
             </section>
 
+            <!-- Quiz Section -->
+            <section id="quizSection" class="quiz-section" style="display: none;">
+                <div class="quiz-header">
+                    <h3 id="quizTitle">Quiz</h3>
+                    <div class="quiz-actions">
+                        <button id="closeQuizBtn" class="btn btn-secondary btn-icon" title="Close Quiz">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+                <div id="quizContent" class="quiz-content">
+                    <!-- Quiz content will be dynamically added here -->
+                </div>
+            </section>
+
             <!-- Participants Grid - Only for Teacher -->
             <section id="participantsSection" class="participants-section">
                 <div class="participants-header">
@@ -69,6 +84,11 @@
                 <button id="muteAllStudentsBtn" class="control-btn" style="display: none;">
                     <span class="control-icon">🔇</span>
                     <span class="control-text">Mute All</span>
+                </button>
+                
+                <button id="createQuizBtn" class="control-btn" style="display: none;">
+                    <span class="control-icon">📝</span>
+                    <span class="control-text">Create Quiz</span>
                 </button>
                 
                 <button id="raiseHandBtn" class="control-btn">
@@ -106,6 +126,66 @@
                 </div>
                 <div class="modal-footer">
                     <button id="joinClassBtn" class="btn btn-primary btn-large">Join Classroom</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quiz Creation Modal -->
+        <div id="quizCreationModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Create Quiz</h2>
+                    <p>Create a multiple choice question for your students</p>
+                </div>
+                <div class="modal-body">
+                    <div class="input-group">
+                        <label for="quizQuestion">Question</label>
+                        <textarea id="quizQuestion" placeholder="Enter your question here..." rows="3" maxlength="500"></textarea>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Options</label>
+                        <div class="quiz-options">
+                            <div class="option-row">
+                                <input type="radio" name="correctAnswer" value="0" id="correct0">
+                                <input type="text" id="option0" placeholder="Option A" maxlength="200">
+                            </div>
+                            <div class="option-row">
+                                <input type="radio" name="correctAnswer" value="1" id="correct1">
+                                <input type="text" id="option1" placeholder="Option B" maxlength="200">
+                            </div>
+                            <div class="option-row">
+                                <input type="radio" name="correctAnswer" value="2" id="correct2">
+                                <input type="text" id="option2" placeholder="Option C" maxlength="200">
+                            </div>
+                            <div class="option-row">
+                                <input type="radio" name="correctAnswer" value="3" id="correct3">
+                                <input type="text" id="option3" placeholder="Option D" maxlength="200">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="cancelQuizBtn" class="btn btn-secondary">Cancel</button>
+                    <button id="publishQuizBtn" class="btn btn-primary">Publish Quiz</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quiz Results Modal -->
+        <div id="quizResultsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Quiz Results</h2>
+                    <p>Student responses and analytics</p>
+                </div>
+                <div class="modal-body">
+                    <div id="quizResultsContent">
+                        <!-- Results will be dynamically added here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="closeResultsBtn" class="btn btn-primary">Close</button>
                 </div>
             </div>
         </div>

@@ -31,6 +31,11 @@ class VirtualClassroom {
         // Track mute all students state
         this.allStudentsMuted = false;
         
+        // Quiz state
+        this.currentQuiz = null;
+        this.quizResponses = new Map();
+        this.hasAnsweredQuiz = false;
+        
         this.initializeApp();
     }
 
@@ -63,8 +68,28 @@ class VirtualClassroom {
         this.audioToggle = document.getElementById('audioToggle');
         this.screenShareBtn = document.getElementById('screenShareBtn');
         this.muteAllStudentsBtn = document.getElementById('muteAllStudentsBtn');
+        this.createQuizBtn = document.getElementById('createQuizBtn');
         this.raiseHandBtn = document.getElementById('raiseHandBtn');
         this.leaveBtn = document.getElementById('leaveBtn');
+        
+        // Quiz elements
+        this.quizSection = document.getElementById('quizSection');
+        this.quizTitle = document.getElementById('quizTitle');
+        this.quizContent = document.getElementById('quizContent');
+        this.closeQuizBtn = document.getElementById('closeQuizBtn');
+        
+        // Quiz modal elements
+        this.quizCreationModal = document.getElementById('quizCreationModal');
+        this.quizQuestion = document.getElementById('quizQuestion');
+        this.quizOptions = document.querySelectorAll('#option0, #option1, #option2, #option3');
+        this.correctAnswers = document.querySelectorAll('input[name="correctAnswer"]');
+        this.cancelQuizBtn = document.getElementById('cancelQuizBtn');
+        this.publishQuizBtn = document.getElementById('publishQuizBtn');
+        
+        // Quiz results modal
+        this.quizResultsModal = document.getElementById('quizResultsModal');
+        this.quizResultsContent = document.getElementById('quizResultsContent');
+        this.closeResultsBtn = document.getElementById('closeResultsBtn');
         
         // Modal elements
         this.joinModal = document.getElementById('joinModal');
@@ -80,8 +105,15 @@ class VirtualClassroom {
         this.audioToggle.addEventListener('click', () => this.toggleAudio());
         this.screenShareBtn.addEventListener('click', () => this.toggleScreenShare());
         this.muteAllStudentsBtn.addEventListener('click', () => this.toggleMuteAllStudents());
+        this.createQuizBtn.addEventListener('click', () => this.showQuizCreationModal());
         this.raiseHandBtn.addEventListener('click', () => this.toggleRaiseHand());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
+        
+        // Quiz event listeners
+        this.closeQuizBtn.addEventListener('click', () => this.closeQuiz());
+        this.cancelQuizBtn.addEventListener('click', () => this.hideQuizCreationModal());
+        this.publishQuizBtn.addEventListener('click', () => this.publishQuiz());
+        this.closeResultsBtn.addEventListener('click', () => this.hideQuizResultsModal());
         const toggleBtn = document.getElementById('toggleTeacherSize');
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => this.toggleTeacherMaximize());
@@ -191,11 +223,13 @@ class VirtualClassroom {
         this.teacherSection.style.display = 'flex';
         this.participantsSection.style.display = 'flex';
         
-        // Show/hide mute all students button based on role
+        // Show/hide teacher-only buttons based on role
         if (this.userRole === 'teacher') {
             this.muteAllStudentsBtn.style.display = 'flex';
+            this.createQuizBtn.style.display = 'flex';
         } else {
             this.muteAllStudentsBtn.style.display = 'none';
+            this.createQuizBtn.style.display = 'none';
         }
         
         // If user is teacher, set their local video in teacher section
@@ -284,6 +318,18 @@ class VirtualClassroom {
         this.muteAllStudentsRef = database.ref(`rooms/${this.roomId}/muteAllStudents`);
         this.muteAllStudentsRef.on('value', (snapshot) => {
             this.handleMuteAllStudentsUpdate(snapshot);
+        });
+
+        // Listen for quiz updates
+        this.quizRef = database.ref(`rooms/${this.roomId}/quiz`);
+        this.quizRef.on('value', (snapshot) => {
+            this.handleQuizUpdate(snapshot);
+        });
+
+        // Listen for quiz responses
+        this.quizResponsesRef = database.ref(`rooms/${this.roomId}/quizResponses`);
+        this.quizResponsesRef.on('value', (snapshot) => {
+            this.handleQuizResponsesUpdate(snapshot);
         });
 
         // Find current teacher
@@ -1166,6 +1212,8 @@ class VirtualClassroom {
             if (this.signalsRef) this.signalsRef.off();
             if (this.screenShareRef) this.screenShareRef.off();
             if (this.muteAllStudentsRef) this.muteAllStudentsRef.off();
+            if (this.quizRef) this.quizRef.off();
+            if (this.quizResponsesRef) this.quizResponsesRef.off();
 
             const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
             await userRef.remove();
@@ -1175,6 +1223,265 @@ class VirtualClassroom {
             }
 
             location.reload();
+        }
+    }
+
+    // Quiz Functions
+    showQuizCreationModal() {
+        if (this.userRole !== 'teacher') return;
+        this.quizCreationModal.classList.add('active');
+        this.clearQuizForm();
+    }
+
+    hideQuizCreationModal() {
+        this.quizCreationModal.classList.remove('active');
+    }
+
+    clearQuizForm() {
+        this.quizQuestion.value = '';
+        this.quizOptions.forEach(option => option.value = '');
+        this.correctAnswers.forEach(radio => radio.checked = false);
+    }
+
+    async publishQuiz() {
+        const question = this.quizQuestion.value.trim();
+        const options = Array.from(this.quizOptions).map(option => option.value.trim());
+        const correctAnswerIndex = Array.from(this.correctAnswers).findIndex(radio => radio.checked);
+
+        if (!question) {
+            alert('Please enter a question');
+            return;
+        }
+
+        if (options.some(option => !option)) {
+            alert('Please fill in all options');
+            return;
+        }
+
+        if (correctAnswerIndex === -1) {
+            alert('Please select the correct answer');
+            return;
+        }
+
+        const quiz = {
+            id: 'quiz_' + Date.now(),
+            question: question,
+            options: options,
+            correctAnswer: correctAnswerIndex,
+            teacherId: this.userId,
+            teacherName: this.userName,
+            createdAt: firebase.database.ServerValue.TIMESTAMP,
+            active: true
+        };
+
+        await database.ref(`rooms/${this.roomId}/quiz`).set(quiz);
+        this.hideQuizCreationModal();
+        console.log('Quiz published:', quiz);
+    }
+
+    handleQuizUpdate(snapshot) {
+        const quizData = snapshot.val();
+        if (quizData && quizData.active) {
+            this.currentQuiz = quizData;
+            this.showQuiz(quizData);
+        } else {
+            this.currentQuiz = null;
+            this.hideQuiz();
+        }
+    }
+
+    showQuiz(quiz) {
+        this.quizSection.style.display = 'flex';
+        this.quizTitle.textContent = `Quiz by ${quiz.teacherName}`;
+        
+        const quizHTML = `
+            <div class="quiz-question">
+                <h4>${quiz.question}</h4>
+                <div class="quiz-options">
+                    ${quiz.options.map((option, index) => `
+                        <div class="option-row" data-option="${index}">
+                            <input type="radio" name="quizAnswer" value="${index}" id="quizOption${index}">
+                            <label for="quizOption${index}">${option}</label>
+                        </div>
+                    `).join('')}
+                </div>
+                <button class="quiz-submit-btn" id="submitQuizBtn">Submit Answer</button>
+            </div>
+        `;
+        
+        this.quizContent.innerHTML = quizHTML;
+        
+        // Add event listeners for quiz options
+        this.quizContent.querySelectorAll('.option-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const radio = row.querySelector('input[type="radio"]');
+                radio.checked = true;
+                this.updateQuizOptionSelection();
+            });
+        });
+
+        // Add submit button listener
+        this.quizContent.querySelector('#submitQuizBtn').addEventListener('click', () => {
+            this.submitQuizAnswer();
+        });
+
+        // Reset answered state
+        this.hasAnsweredQuiz = false;
+        
+        // Add results button for teachers
+        if (this.userRole === 'teacher') {
+            this.addQuizResultsButton();
+        }
+    }
+
+    updateQuizOptionSelection() {
+        this.quizContent.querySelectorAll('.option-row').forEach(row => {
+            row.classList.remove('selected');
+        });
+        
+        const selectedRow = this.quizContent.querySelector('input[name="quizAnswer"]:checked');
+        if (selectedRow) {
+            selectedRow.closest('.option-row').classList.add('selected');
+        }
+    }
+
+    async submitQuizAnswer() {
+        if (this.hasAnsweredQuiz) return;
+
+        const selectedAnswer = this.quizContent.querySelector('input[name="quizAnswer"]:checked');
+        if (!selectedAnswer) {
+            alert('Please select an answer');
+            return;
+        }
+
+        const answerIndex = parseInt(selectedAnswer.value);
+        const isCorrect = answerIndex === this.currentQuiz.correctAnswer;
+
+        // Store response
+        const response = {
+            studentId: this.userId,
+            studentName: this.userName,
+            answer: answerIndex,
+            isCorrect: isCorrect,
+            submittedAt: firebase.database.ServerValue.TIMESTAMP
+        };
+
+        await database.ref(`rooms/${this.roomId}/quizResponses/${this.userId}`).set(response);
+        this.hasAnsweredQuiz = true;
+
+        // Show correct answer
+        this.showQuizResults();
+    }
+
+    showQuizResults() {
+        if (!this.currentQuiz) return;
+
+        this.quizContent.querySelectorAll('.option-row').forEach((row, index) => {
+            const radio = row.querySelector('input[type="radio"]');
+            if (index === this.currentQuiz.correctAnswer) {
+                row.classList.add('correct');
+            } else if (radio.checked && index !== this.currentQuiz.correctAnswer) {
+                row.classList.add('incorrect');
+            }
+        });
+
+        // Disable submit button
+        const submitBtn = this.quizContent.querySelector('#submitQuizBtn');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Answer Submitted';
+    }
+
+    hideQuiz() {
+        this.quizSection.style.display = 'none';
+        this.quizContent.innerHTML = '';
+        this.hasAnsweredQuiz = false;
+    }
+
+    closeQuiz() {
+        if (this.userRole === 'teacher') {
+            // Teacher can close quiz
+            database.ref(`rooms/${this.roomId}/quiz`).remove();
+        }
+        this.hideQuiz();
+    }
+
+    handleQuizResponsesUpdate(snapshot) {
+        const responses = snapshot.val();
+        if (responses) {
+            this.quizResponses.clear();
+            Object.entries(responses).forEach(([studentId, response]) => {
+                this.quizResponses.set(studentId, response);
+            });
+            
+            // Update teacher's quiz results if they're viewing them
+            if (this.userRole === 'teacher' && this.quizResultsModal.classList.contains('active')) {
+                this.displayQuizResults();
+            }
+        }
+    }
+
+    showQuizResultsModal() {
+        if (this.userRole !== 'teacher' || !this.currentQuiz) return;
+        this.quizResultsModal.classList.add('active');
+        this.displayQuizResults();
+    }
+
+    hideQuizResultsModal() {
+        this.quizResultsModal.classList.remove('active');
+    }
+
+    displayQuizResults() {
+        if (!this.currentQuiz) return;
+
+        const totalResponses = this.quizResponses.size;
+        const correctResponses = Array.from(this.quizResponses.values()).filter(r => r.isCorrect).length;
+        const accuracy = totalResponses > 0 ? Math.round((correctResponses / totalResponses) * 100) : 0;
+
+        const resultsHTML = `
+            <div class="quiz-stats">
+                <div class="stat-card">
+                    <h4>${totalResponses}</h4>
+                    <p>Total Responses</p>
+                </div>
+                <div class="stat-card">
+                    <h4>${correctResponses}</h4>
+                    <p>Correct Answers</p>
+                </div>
+                <div class="stat-card">
+                    <h4>${accuracy}%</h4>
+                    <p>Accuracy Rate</p>
+                </div>
+            </div>
+            
+            <div class="student-responses">
+                <h4>Student Responses</h4>
+                ${Array.from(this.quizResponses.values()).map(response => `
+                    <div class="student-response ${response.isCorrect ? 'correct' : 'incorrect'}">
+                        <span class="student-name">${response.studentName}</span>
+                        <span class="student-answer">
+                            ${this.currentQuiz.options[response.answer]} 
+                            ${response.isCorrect ? '✓' : '✗'}
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        this.quizResultsContent.innerHTML = resultsHTML;
+    }
+
+    // Add event listener for quiz results button (for teachers)
+    addQuizResultsButton() {
+        if (this.userRole === 'teacher' && this.currentQuiz) {
+            const resultsBtn = document.createElement('button');
+            resultsBtn.className = 'btn btn-primary';
+            resultsBtn.innerHTML = '📊 View Results';
+            resultsBtn.addEventListener('click', () => this.showQuizResultsModal());
+            
+            const quizActions = this.quizSection.querySelector('.quiz-actions');
+            if (quizActions && !quizActions.querySelector('.btn-primary')) {
+                quizActions.appendChild(resultsBtn);
+            }
         }
     }
 }
