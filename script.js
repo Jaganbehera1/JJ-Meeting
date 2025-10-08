@@ -651,11 +651,18 @@ class VirtualClassroom {
                         this.teacherTitle.textContent = `${participantData.name} - Screen Sharing`;
                     }
                 } else if (this.userRole === 'teacher' && participantData.role === 'student') {
-                    // Teacher receiving student's stream - show in participants grid
+                    // Teacher receiving student's stream - show in participants grid ONLY
                     this.showParticipantVideo(peerId, stream);
                 } else if (this.userRole === 'student' && participantData.role === 'student') {
                     // Student receiving another student's stream - show in participants grid
                     this.showParticipantVideo(peerId, stream);
+                }
+                
+                // CRITICAL: Ensure teacher's video section is never overwritten by remote streams
+                if (this.userRole === 'teacher' && this.localStream) {
+                    // Always restore teacher's local video in teacher section
+                    this.teacherVideo.srcObject = this.localStream;
+                    this.teacherTitle.textContent = `${this.userName}'s Screen`;
                 }
             }
         }).catch(error => {
@@ -1007,19 +1014,26 @@ class VirtualClassroom {
                 this.teacherTitle.textContent = "Teacher's Screen";
                 const teacherId = this.currentTeacherId || (screenData ? screenData.teacherId : null);
                 const pc = teacherId ? this.peers[teacherId] : null;
-        if (pc) {
-            // Prefer full remote stream from ontrack if already attached
-            if (this.teacherVideo && this.teacherVideo.srcObject instanceof MediaStream && this.teacherVideo.srcObject.getVideoTracks().length > 0) {
-                try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
-            } else {
-                const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
-                if (receiver && receiver.track) {
-                    const stream = new MediaStream([receiver.track]);
-                    this.teacherVideo.srcObject = stream;
+                if (pc) {
+                    // Prefer full remote stream from ontrack if already attached
+                    if (this.teacherVideo && this.teacherVideo.srcObject instanceof MediaStream && this.teacherVideo.srcObject.getVideoTracks().length > 0) {
+                        try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
+                    } else {
+                        const receiver = pc.getReceivers().find(r => r.track && r.track.kind === 'video');
+                        if (receiver && receiver.track) {
+                            const stream = new MediaStream([receiver.track]);
+                            this.teacherVideo.srcObject = stream;
+                            try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
+                        }
+                    }
+                }
+            } else if (this.userRole === 'teacher') {
+                // Teacher should see their own local video, not remote streams
+                if (this.localStream) {
+                    this.teacherVideo.srcObject = this.localStream;
+                    this.teacherTitle.textContent = `${this.userName}'s Screen`;
                     try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
                 }
-            }
-        }
             }
         }
     }
