@@ -160,6 +160,13 @@ class VirtualClassroom {
             
             // Show/hide sections based on role
             this.updateUIBasedOnRole();
+            
+            // Ensure teacher's local video is set in teacher section
+            if (this.userRole === 'teacher' && this.localStream) {
+                this.teacherVideo.srcObject = this.localStream;
+                this.teacherTitle.textContent = `${this.userName}'s Screen`;
+            }
+            
             // Unlock autoplay so remote audio can play after first interaction
             this.installAudioUnlockOnce();
             
@@ -178,6 +185,12 @@ class VirtualClassroom {
         // Show both sections for all users
         this.teacherSection.style.display = 'flex';
         this.participantsSection.style.display = 'flex';
+        
+        // If user is teacher, set their local video in teacher section
+        if (this.userRole === 'teacher' && this.localStream) {
+            this.teacherVideo.srcObject = this.localStream;
+            this.teacherTitle.textContent = `${this.userName}'s Screen`;
+        }
     }
 
     installAudioUnlockOnce() {
@@ -622,6 +635,11 @@ class VirtualClassroom {
     handleRemoteStream(peerId, stream) {
         console.log(`Handling remote stream from ${peerId}`);
         
+        // Don't handle our own stream
+        if (peerId === this.userId) {
+            return;
+        }
+        
         database.ref(`rooms/${this.roomId}/participants/${peerId}`).once('value').then(snapshot => {
             const participantData = snapshot.val();
             if (participantData) {
@@ -756,6 +774,12 @@ class VirtualClassroom {
                     }
                 }, 500);
             }
+        }
+    
+        // Update teacher's local video in teacher section
+        if (this.userRole === 'teacher' && this.localStream) {
+            this.teacherVideo.srcObject = this.localStream;
+            this.teacherTitle.textContent = `${this.userName}'s Screen`;
         }
     
         console.log("Camera track replaced for all peers.");
@@ -941,13 +965,11 @@ class VirtualClassroom {
          this.isScreenSharing = false;
          this.updateScreenShareButton();
  
-         // Restore teacher’s local preview element
+         // Restore teacher's local preview element
          if (this.userRole === 'teacher' && this.localStream) {
-             const localVideo = document.getElementById('teacherVideo');
-             if (localVideo) {
-                 localVideo.srcObject = this.localStream;
-                 try { localVideo.play().catch(() => {}); } catch (_) {}
-             }
+             this.teacherVideo.srcObject = this.localStream;
+             this.teacherTitle.textContent = `${this.userName}'s Screen`;
+             try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
              // Proactively re-offer to all peers to ensure cameras are re-negotiated
              for (const peerId of Object.keys(this.peers)) {
                  const pc = this.peers[peerId];
