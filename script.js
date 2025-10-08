@@ -28,6 +28,9 @@ class VirtualClassroom {
         this.screenSharingTeacherId = null;
         this.currentTeacherId = null;
         
+        // Track mute all students state
+        this.allStudentsMuted = false;
+        
         this.initializeApp();
     }
 
@@ -59,6 +62,7 @@ class VirtualClassroom {
         this.videoToggle = document.getElementById('videoToggle');
         this.audioToggle = document.getElementById('audioToggle');
         this.screenShareBtn = document.getElementById('screenShareBtn');
+        this.muteAllStudentsBtn = document.getElementById('muteAllStudentsBtn');
         this.raiseHandBtn = document.getElementById('raiseHandBtn');
         this.leaveBtn = document.getElementById('leaveBtn');
         
@@ -75,6 +79,7 @@ class VirtualClassroom {
         this.videoToggle.addEventListener('click', () => this.toggleVideo());
         this.audioToggle.addEventListener('click', () => this.toggleAudio());
         this.screenShareBtn.addEventListener('click', () => this.toggleScreenShare());
+        this.muteAllStudentsBtn.addEventListener('click', () => this.toggleMuteAllStudents());
         this.raiseHandBtn.addEventListener('click', () => this.toggleRaiseHand());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
         const toggleBtn = document.getElementById('toggleTeacherSize');
@@ -186,6 +191,13 @@ class VirtualClassroom {
         this.teacherSection.style.display = 'flex';
         this.participantsSection.style.display = 'flex';
         
+        // Show/hide mute all students button based on role
+        if (this.userRole === 'teacher') {
+            this.muteAllStudentsBtn.style.display = 'flex';
+        } else {
+            this.muteAllStudentsBtn.style.display = 'none';
+        }
+        
         // If user is teacher, set their local video in teacher section
         if (this.userRole === 'teacher' && this.localStream) {
             this.teacherVideo.srcObject = this.localStream;
@@ -266,6 +278,12 @@ class VirtualClassroom {
         this.screenShareRef = database.ref(`rooms/${this.roomId}/screenShare`);
         this.screenShareRef.on('value', (snapshot) => {
             this.handleScreenShareUpdate(snapshot);
+        });
+
+        // Listen for mute all students command
+        this.muteAllStudentsRef = database.ref(`rooms/${this.roomId}/muteAllStudents`);
+        this.muteAllStudentsRef.on('value', (snapshot) => {
+            this.handleMuteAllStudentsUpdate(snapshot);
         });
 
         // Find current teacher
@@ -1000,6 +1018,25 @@ class VirtualClassroom {
         this.updateUserStatus();
     }
 
+    async toggleMuteAllStudents() {
+        if (this.userRole !== 'teacher') {
+            return;
+        }
+
+        this.allStudentsMuted = !this.allStudentsMuted;
+        
+        // Send mute all command to Firebase
+        await database.ref(`rooms/${this.roomId}/muteAllStudents`).set({
+            active: this.allStudentsMuted,
+            teacherId: this.userId,
+            teacherName: this.userName,
+            timestamp: firebase.database.ServerValue.TIMESTAMP
+        });
+
+        this.updateMuteAllStudentsButton();
+        console.log(`Teacher ${this.allStudentsMuted ? 'muted' : 'unmuted'} all students`);
+    }
+
     handleScreenShareUpdate(snapshot) {
         const screenData = snapshot.val();
         if (screenData && screenData.active && screenData.teacherId !== this.userId) {
@@ -1038,6 +1075,31 @@ class VirtualClassroom {
         }
     }
 
+    handleMuteAllStudentsUpdate(snapshot) {
+        const muteData = snapshot.val();
+        if (muteData && muteData.active && muteData.teacherId !== this.userId) {
+            // Only students should be affected by mute all command
+            if (this.userRole === 'student') {
+                // Mute the student's audio
+                if (this.localStream) {
+                    const audioTrack = this.localStream.getAudioTracks()[0];
+                    if (audioTrack) {
+                        audioTrack.enabled = false;
+                        this.isAudioOn = false;
+                        this.updateAudioButton();
+                        this.updateUserStatus();
+                        console.log('Student muted by teacher');
+                    }
+                }
+            }
+        } else if (!muteData || !muteData.active) {
+            // Mute all command ended - students can unmute themselves
+            if (this.userRole === 'student') {
+                console.log('Mute all command ended - students can now control their own audio');
+            }
+        }
+    }
+
     updateVideoButton() {
         const icon = this.isVideoOn ? '📹' : '❌';
         const text = this.isVideoOn ? 'Stop Video' : 'Start Video';
@@ -1068,6 +1130,14 @@ class VirtualClassroom {
         this.raiseHandBtn.classList.toggle('control-active', this.isHandRaised);
     }
 
+    updateMuteAllStudentsButton() {
+        const icon = this.allStudentsMuted ? '🔊' : '🔇';
+        const text = this.allStudentsMuted ? 'Unmute All' : 'Mute All';
+        this.muteAllStudentsBtn.querySelector('.control-icon').textContent = icon;
+        this.muteAllStudentsBtn.querySelector('.control-text').textContent = text;
+        this.muteAllStudentsBtn.classList.toggle('control-active', this.allStudentsMuted);
+    }
+
     async updateUserStatus() {
         const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
         await userRef.update({
@@ -1095,6 +1165,7 @@ class VirtualClassroom {
             if (this.participantsRef) this.participantsRef.off();
             if (this.signalsRef) this.signalsRef.off();
             if (this.screenShareRef) this.screenShareRef.off();
+            if (this.muteAllStudentsRef) this.muteAllStudentsRef.off();
 
             const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
             await userRef.remove();
