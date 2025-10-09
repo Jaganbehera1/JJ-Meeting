@@ -486,6 +486,12 @@ class VirtualClassroom {
             }
             this.currentTeacherId = null;
             this.findCurrentTeacher();
+            
+            // If teacher leaves, clear all room data
+            this.clearRoomData();
+        } else {
+            // If student leaves, check if room is empty and clear if so
+            this.checkAndClearEmptyRoom();
         }
         
         this.updateParticipantsCount();
@@ -1396,15 +1402,51 @@ class VirtualClassroom {
             if (this.muteAllStudentsRef) this.muteAllStudentsRef.off();
             if (this.quizRef) this.quizRef.off();
             if (this.quizResponsesRef) this.quizResponsesRef.off();
+            if (this.chatRef) this.chatRef.off();
 
             const userRef = database.ref(`rooms/${this.roomId}/participants/${this.userId}`);
             await userRef.remove();
 
-            if (this.userRole === 'teacher' && this.isScreenSharing) {
-                await database.ref(`rooms/${this.roomId}/screenShare`).set({ active: false });
+            // If teacher leaves, clear entire room data
+            if (this.userRole === 'teacher') {
+                await this.clearRoomData();
+            } else {
+                // If student leaves, check if room is empty and clear if so
+                await this.checkAndClearEmptyRoom();
             }
 
             location.reload();
+        }
+    }
+
+    async clearRoomData() {
+        console.log('Teacher leaving - clearing all room data');
+        try {
+            const roomRef = database.ref(`rooms/${this.roomId}`);
+            await roomRef.remove();
+            console.log('Room data cleared successfully');
+            
+            // Clear local chat messages display
+            if (this.chatMessages) {
+                this.chatMessages.innerHTML = '';
+            }
+        } catch (error) {
+            console.error('Error clearing room data:', error);
+        }
+    }
+
+    async checkAndClearEmptyRoom() {
+        try {
+            const participantsSnapshot = await database.ref(`rooms/${this.roomId}/participants`).once('value');
+            const participants = participantsSnapshot.val();
+            
+            // If no participants left, clear the room
+            if (!participants || Object.keys(participants).length === 0) {
+                console.log('No participants left - clearing room data');
+                await this.clearRoomData();
+            }
+        } catch (error) {
+            console.error('Error checking empty room:', error);
         }
     }
 
@@ -1639,6 +1681,12 @@ class VirtualClassroom {
     // Chat
     setupChatListener() {
         if (!this.roomId) return;
+        
+        // Clear existing chat messages when joining
+        if (this.chatMessages) {
+            this.chatMessages.innerHTML = '';
+        }
+        
         this.chatRef = database.ref(`rooms/${this.roomId}/chat`);
         this.chatRef.limitToLast(200).on('child_added', (snap) => {
             const msg = snap.val();
