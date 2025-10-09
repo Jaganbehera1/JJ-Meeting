@@ -410,7 +410,7 @@ class VirtualClassroom {
         }
     }
 
-    async handleParticipantJoined(snapshot) {
+    async     handleParticipantJoined(snapshot) {
         const participantData = snapshot.val();
         const participantId = snapshot.key;
     
@@ -441,6 +441,9 @@ class VirtualClassroom {
             this.addParticipantToGrid(participantId, participantData);
         } else if (this.userRole === 'teacher' && participantData.role === 'teacher') {
             console.log('Another teacher joined the room');
+            // Teacher-to-teacher connection
+            await this.createPeerConnection(participantId, true);
+            this.addParticipantToGrid(participantId, participantData);
         }
     
         this.updateParticipantsCount();
@@ -452,10 +455,8 @@ class VirtualClassroom {
 
         if (participantId === this.userId) return;
 
-        // Update participant in grid if teacher
-        if (this.userRole === 'teacher') {
-            this.updateParticipantInGrid(participantId, participantData);
-        }
+        // Update participant in grid for all users
+        this.updateParticipantInGrid(participantId, participantData);
 
         // Handle screen sharing updates
         if (participantData.role === 'teacher' && this.userRole === 'student') {
@@ -474,10 +475,8 @@ class VirtualClassroom {
         // Close peer connection
         this.closePeerConnection(participantId);
         
-        // Remove from UI if teacher
-        if (this.userRole === 'teacher') {
-            this.removeParticipantFromGrid(participantId);
-        }
+        // Remove from UI for all users (not just teacher)
+        this.removeParticipantFromGrid(participantId);
         
         // If the teacher leaves, clear teacher video and find new teacher
         if (participantData.role === 'teacher') {
@@ -914,10 +913,13 @@ class VirtualClassroom {
                 }
             });
         } else {
-            // Update existing participant card
+            // Update existing participant card with new stream
             const videoElement = participantCard.querySelector('.participant-video');
             if (videoElement) {
                 videoElement.srcObject = stream;
+                videoElement.onloadedmetadata = () => {
+                    videoElement.play().catch(e => console.log('Play error:', e));
+                };
             }
         }
     }
@@ -1015,7 +1017,11 @@ class VirtualClassroom {
 
     // UI Management
     addParticipantToGrid(participantId, participantData) {
-        if (document.getElementById(`participant-${participantId}`)) return;
+        // Check if card already exists to prevent duplicates
+        if (document.getElementById(`participant-${participantId}`)) {
+            console.log(`Participant card already exists for ${participantId}, skipping creation`);
+            return;
+        }
 
         const participantCard = document.createElement('div');
         participantCard.className = 'participant-card';
@@ -1034,6 +1040,7 @@ class VirtualClassroom {
         `;
 
         this.participantsGrid.appendChild(participantCard);
+        this.updateParticipantsCount();
     }
 
     updateParticipantInGrid(participantId, participantData) {
