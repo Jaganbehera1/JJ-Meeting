@@ -937,6 +937,9 @@ class VirtualClassroom {
                     videoElement.play().catch(e => console.log('Play error:', e));
                 };
                 console.log(`Video element updated with new stream for ${peerId}`);
+            } else {
+                console.error(`No video element found in existing card for ${peerId}`);
+                console.log(`Card HTML:`, participantCard.innerHTML);
             }
         }
     }
@@ -1058,6 +1061,7 @@ class VirtualClassroom {
 
         this.participantsGrid.appendChild(participantCard);
         this.updateParticipantsCount();
+        console.log(`Participant card created for ${participantData.name} with video element`);
     }
 
     updateParticipantInGrid(participantId, participantData) {
