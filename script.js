@@ -203,6 +203,7 @@ class VirtualClassroom {
             // Ensure teacher's local video is set in teacher section
             if (this.userRole === 'teacher' && this.localStream) {
                 this.teacherVideo.srcObject = this.localStream;
+                this.teacherVideo.muted = true;
                 this.teacherTitle.textContent = `${this.userName}'s Screen`;
             }
             
@@ -237,6 +238,7 @@ class VirtualClassroom {
         // If user is teacher, set their local video in teacher section
         if (this.userRole === 'teacher' && this.localStream) {
             this.teacherVideo.srcObject = this.localStream;
+            this.teacherVideo.muted = true;
             this.teacherTitle.textContent = `${this.userName}'s Screen`;
         }
     }
@@ -1081,6 +1083,7 @@ class VirtualClassroom {
                 // Update local display first
                 if (this.teacherVideo) {
                     this.teacherVideo.srcObject = this.screenStream;
+                    this.teacherVideo.muted = true;
                     this.teacherTitle.textContent = `${this.userName} - Screen Sharing`;
                 }
     
@@ -1116,6 +1119,7 @@ class VirtualClassroom {
             // Restore camera view
             if (this.localStream && this.teacherVideo) {
                 this.teacherVideo.srcObject = this.localStream;
+                this.teacherVideo.muted = true;
                 this.teacherTitle.textContent = `${this.userName}'s Screen`;
             }
         }
@@ -1155,6 +1159,7 @@ class VirtualClassroom {
          // Restore teacher's local preview element
          if (this.userRole === 'teacher' && this.localStream) {
              this.teacherVideo.srcObject = this.localStream;
+             this.teacherVideo.muted = true;
              this.teacherTitle.textContent = `${this.userName}'s Screen`;
              try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
              // Proactively re-offer to all peers to ensure cameras are re-negotiated
@@ -1222,6 +1227,7 @@ class VirtualClassroom {
                 // Teacher should see their own local video
                 if (this.localStream && this.teacherVideo) {
                     this.teacherVideo.srcObject = this.localStream;
+                    this.teacherVideo.muted = true;
                     this.teacherTitle.textContent = `${this.userName}'s Screen`;
                     try { 
                         this.teacherVideo.play().catch(e => console.log('Teacher video play error:', e)); 
