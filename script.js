@@ -25,6 +25,12 @@ class VirtualClassroom {
                 { urls: 'stun:stun2.l.google.com:19302' }
             ]
         };
+        // Merge optional TURN servers if provided on the window
+        try {
+            if (window && Array.isArray(window.TURN_CONFIG) && window.TURN_CONFIG.length > 0) {
+                this.rtcConfig.iceServers = this.rtcConfig.iceServers.concat(window.TURN_CONFIG);
+            }
+        } catch (_) {}
         
         // Track screen sharing state
         this.screenSharingTeacherId = null;
@@ -250,11 +256,20 @@ class VirtualClassroom {
             const mediaEls = document.querySelectorAll('video, audio');
             mediaEls.forEach(el => {
                 try {
-                    el.muted = false;
+                    // Keep teacher's local preview muted to prevent echo
+                    if (this.userRole === 'teacher' && el.id === 'teacherVideo') {
+                        el.muted = true;
+                    } else {
+                        el.muted = false;
+                    }
                     const p = el.play();
                     if (p && typeof p.catch === 'function') p.catch(() => {});
                 } catch (_) {}
             });
+            // Extra safety: ensure teacher preview remains muted
+            if (this.userRole === 'teacher' && this.teacherVideo) {
+                this.teacherVideo.muted = true;
+            }
             document.removeEventListener('click', tryUnlock);
             document.removeEventListener('touchstart', tryUnlock);
             document.removeEventListener('keydown', tryUnlock);
