@@ -105,6 +105,16 @@ class VirtualClassroom {
         this.userRoleSelect = document.getElementById('userRole');
         this.roomIdInput = document.getElementById('roomId');
         this.joinClassBtn = document.getElementById('joinClassBtn');
+
+        // Ensure teacher preview is always muted to prevent echo
+        if (this.teacherVideo) {
+            this.teacherVideo.addEventListener('volumechange', () => {
+                if (this.userRole === 'teacher') {
+                    this.teacherVideo.muted = true;
+                    this.teacherVideo.setAttribute('muted', '');
+                }
+            });
+        }
     }
 
     setupEventListeners() {
@@ -210,6 +220,7 @@ class VirtualClassroom {
             if (this.userRole === 'teacher' && this.localStream) {
                 this.teacherVideo.srcObject = this.localStream;
                 this.teacherVideo.muted = true;
+                this.teacherVideo.setAttribute('muted', '');
                 this.teacherTitle.textContent = `${this.userName}'s Screen`;
             }
             
@@ -245,6 +256,7 @@ class VirtualClassroom {
         if (this.userRole === 'teacher' && this.localStream) {
             this.teacherVideo.srcObject = this.localStream;
             this.teacherVideo.muted = true;
+            this.teacherVideo.setAttribute('muted', '');
             this.teacherTitle.textContent = `${this.userName}'s Screen`;
         }
     }
@@ -778,6 +790,7 @@ class VirtualClassroom {
                 if (receiver && receiver.track) {
                     const stream = new MediaStream([receiver.track]);
                     this.teacherVideo.srcObject = stream;
+                    // Students should hear teacher; do not mute here
                     this.teacherVideo.play().catch(console.error);
                 }
             }
@@ -1099,6 +1112,7 @@ class VirtualClassroom {
                 if (this.teacherVideo) {
                     this.teacherVideo.srcObject = this.screenStream;
                     this.teacherVideo.muted = true;
+                    this.teacherVideo.setAttribute('muted', '');
                     this.teacherTitle.textContent = `${this.userName} - Screen Sharing`;
                 }
     
@@ -1135,6 +1149,7 @@ class VirtualClassroom {
             if (this.localStream && this.teacherVideo) {
                 this.teacherVideo.srcObject = this.localStream;
                 this.teacherVideo.muted = true;
+                this.teacherVideo.setAttribute('muted', '');
                 this.teacherTitle.textContent = `${this.userName}'s Screen`;
             }
         }
@@ -1175,6 +1190,7 @@ class VirtualClassroom {
          if (this.userRole === 'teacher' && this.localStream) {
              this.teacherVideo.srcObject = this.localStream;
              this.teacherVideo.muted = true;
+             this.teacherVideo.setAttribute('muted', '');
              this.teacherTitle.textContent = `${this.userName}'s Screen`;
              try { this.teacherVideo.play().catch(() => {}); } catch (_) {}
              // Proactively re-offer to all peers to ensure cameras are re-negotiated
@@ -1243,6 +1259,7 @@ class VirtualClassroom {
                 if (this.localStream && this.teacherVideo) {
                     this.teacherVideo.srcObject = this.localStream;
                     this.teacherVideo.muted = true;
+                    this.teacherVideo.setAttribute('muted', '');
                     this.teacherTitle.textContent = `${this.userName}'s Screen`;
                     try { 
                         this.teacherVideo.play().catch(e => console.log('Teacher video play error:', e)); 
