@@ -56,9 +56,24 @@
             <section id="participantsSection" class="participants-section">
                 <div class="participants-header">
                     <h3>Students <span id="participantsCount" class="count-badge">0</span></h3>
+                    <div class="participants-actions">
+                        <button id="exportAttendanceBtn" class="btn btn-secondary" style="display: none;">Export Attendance</button>
+                    </div>
                 </div>
                 <div id="participantsGrid" class="participants-grid">
                     <!-- Participants will be dynamically added here -->
+                </div>
+            </section>
+
+            <!-- Chat Section -->
+            <section id="chatSection" class="chat-section" style="display: none;">
+                <div class="chat-header">
+                    <h3>Class Chat</h3>
+                </div>
+                <div id="chatMessages" class="chat-messages"></div>
+                <div class="chat-input">
+                    <input id="chatInput" type="text" placeholder="Type a message and press Enter..." maxlength="500">
+                    <button id="chatSendBtn" class="btn btn-primary">Send</button>
                 </div>
             </section>
         </main>
@@ -143,6 +158,11 @@
                         <textarea id="quizQuestion" placeholder="Enter your question here..." rows="3" maxlength="500"></textarea>
                     </div>
                     
+                    <div class="input-group">
+                        <label for="quizDuration">Duration (minutes)</label>
+                        <input type="number" id="quizDuration" min="1" max="120" value="5">
+                    </div>
+
                     <div class="input-group">
                         <label>Options</label>
                         <div class="quiz-options">

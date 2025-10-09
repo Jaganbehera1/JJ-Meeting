@@ -213,6 +213,64 @@ html, body {
 .participants-section:hover {
     box-shadow: var(--shadow-lg);
 }
+/* Chat Section */
+.chat-section {
+    flex: 1;
+    background: var(--background-card);
+    border-radius: var(--border-radius-lg);
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
+}
+
+.chat-header {
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-right: 0.5rem;
+}
+
+.chat-message {
+    background: var(--background-dark);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 0.5rem 0.75rem;
+}
+
+.chat-message .sender {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.chat-message .text {
+    color: var(--text-secondary);
+}
+
+.chat-input {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.chat-input input {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--background-dark);
+    color: var(--text-primary);
+}
 
 .participants-header {
     margin-bottom: 1.5rem;

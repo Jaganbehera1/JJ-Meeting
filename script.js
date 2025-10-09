@@ -89,6 +89,7 @@ class VirtualClassroom {
         // Quiz modal elements
         this.quizCreationModal = document.getElementById('quizCreationModal');
         this.quizQuestion = document.getElementById('quizQuestion');
+        this.quizDuration = document.getElementById('quizDuration');
         this.quizOptions = document.querySelectorAll('#option0, #option1, #option2, #option3');
         this.correctAnswers = document.querySelectorAll('input[name="correctAnswer"]');
         this.cancelQuizBtn = document.getElementById('cancelQuizBtn');
@@ -99,6 +100,15 @@ class VirtualClassroom {
         this.quizResultsContent = document.getElementById('quizResultsContent');
         this.closeResultsBtn = document.getElementById('closeResultsBtn');
         
+        // Chat elements
+        this.chatSection = document.getElementById('chatSection');
+        this.chatMessages = document.getElementById('chatMessages');
+        this.chatInput = document.getElementById('chatInput');
+        this.chatSendBtn = document.getElementById('chatSendBtn');
+
+        // Attendance export
+        this.exportAttendanceBtn = document.getElementById('exportAttendanceBtn');
+
         // Modal elements
         this.joinModal = document.getElementById('joinModal');
         this.userNameInput = document.getElementById('userName');
@@ -137,6 +147,19 @@ class VirtualClassroom {
             toggleBtn.addEventListener('click', () => this.toggleTeacherMaximize());
         }
         
+        // Chat listeners
+        if (this.chatSendBtn) this.chatSendBtn.addEventListener('click', () => this.sendChatMessage());
+        if (this.chatInput) {
+            this.chatInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.sendChatMessage();
+            });
+        }
+
+        // Attendance export
+        if (this.exportAttendanceBtn) {
+            this.exportAttendanceBtn.addEventListener('click', () => this.exportAttendance());
+        }
+
         // Modal buttons
         this.joinClassBtn.addEventListener('click', () => this.joinRoom());
         this.userNameInput.addEventListener('keypress', (e) => {
@@ -230,6 +253,7 @@ class VirtualClassroom {
             // Initialize Firebase and WebRTC
             await this.initializeFirebase();
             this.setupFirebaseListeners();
+            this.setupChatListener();
             
             console.log(`Joined room ${this.roomId} as ${this.userName}`);
             
@@ -242,14 +266,17 @@ class VirtualClassroom {
         // Show both sections for all users
         this.teacherSection.style.display = 'flex';
         this.participantsSection.style.display = 'flex';
+        if (this.chatSection) this.chatSection.style.display = 'flex';
         
         // Show/hide teacher-only buttons based on role
         if (this.userRole === 'teacher') {
             this.muteAllStudentsBtn.style.display = 'flex';
             this.createQuizBtn.style.display = 'flex';
+            if (this.exportAttendanceBtn) this.exportAttendanceBtn.style.display = 'inline-block';
         } else {
             this.muteAllStudentsBtn.style.display = 'none';
             this.createQuizBtn.style.display = 'none';
+            if (this.exportAttendanceBtn) this.exportAttendanceBtn.style.display = 'none';
         }
         
         // If user is teacher, set their local video in teacher section
@@ -1395,6 +1422,7 @@ class VirtualClassroom {
         const question = this.quizQuestion.value.trim();
         const options = Array.from(this.quizOptions).map(option => option.value.trim());
         const correctAnswerIndex = Array.from(this.correctAnswers).findIndex(radio => radio.checked);
+        const durationMinutes = Math.max(1, parseInt(this.quizDuration?.value || '5', 10));
 
         if (!question) {
             alert('Please enter a question');
@@ -1419,7 +1447,8 @@ class VirtualClassroom {
             teacherId: this.userId,
             teacherName: this.userName,
             createdAt: firebase.database.ServerValue.TIMESTAMP,
-            active: true
+            active: true,
+            durationMs: durationMinutes * 60 * 1000
         };
 
         await database.ref(`rooms/${this.roomId}/quiz`).set(quiz);
@@ -1432,6 +1461,12 @@ class VirtualClassroom {
         if (quizData && quizData.active) {
             this.currentQuiz = quizData;
             this.showQuiz(quizData);
+            // Set up timer auto-close
+            if (quizData.durationMs && !this._quizTimer) {
+                const startTs = quizData.createdAt || Date.now();
+                const endTs = startTs + quizData.durationMs;
+                this.installQuizCountdown(endTs);
+            }
         } else {
             this.currentQuiz = null;
             this.hideQuiz();
@@ -1445,6 +1480,7 @@ class VirtualClassroom {
         const quizHTML = `
             <div class="quiz-question">
                 <h4>${quiz.question}</h4>
+                ${quiz.durationMs ? '<div id="quizTimer" class="quiz-timer"></div>' : ''}
                 <div class="quiz-options">
                     ${quiz.options.map((option, index) => `
                         <div class="option-row" data-option="${index}">
@@ -1480,6 +1516,27 @@ class VirtualClassroom {
         if (this.userRole === 'teacher') {
             this.addQuizResultsButton();
         }
+    }
+
+    installQuizCountdown(endTs) {
+        const timerEl = this.quizContent.querySelector('#quizTimer');
+        if (!timerEl) return;
+        const update = () => {
+            const remain = Math.max(0, endTs - Date.now());
+            const m = Math.floor(remain / 60000);
+            const s = Math.floor((remain % 60000) / 1000);
+            timerEl.textContent = `${m}:${s.toString().padStart(2,'0')} remaining`;
+            if (remain <= 0) {
+                clearInterval(this._quizTimer);
+                this._quizTimer = null;
+                if (this.userRole === 'teacher') {
+                    database.ref(`rooms/${this.roomId}/quiz`).remove();
+                }
+            }
+        };
+        if (this._quizTimer) clearInterval(this._quizTimer);
+        this._quizTimer = setInterval(update, 1000);
+        update();
     }
 
     updateQuizOptionSelection() {
@@ -1543,6 +1600,10 @@ class VirtualClassroom {
         this.quizSection.style.display = 'none';
         this.quizContent.innerHTML = '';
         this.hasAnsweredQuiz = false;
+        if (this._quizTimer) {
+            clearInterval(this._quizTimer);
+            this._quizTimer = null;
+        }
     }
 
     closeQuiz() {
@@ -1566,6 +1627,66 @@ class VirtualClassroom {
                 this.displayQuizResults();
             }
         }
+    }
+
+    // Chat
+    setupChatListener() {
+        if (!this.roomId) return;
+        this.chatRef = database.ref(`rooms/${this.roomId}/chat`);
+        this.chatRef.limitToLast(200).on('child_added', (snap) => {
+            const msg = snap.val();
+            this.appendChatMessage(msg);
+        });
+    }
+
+    appendChatMessage(msg) {
+        if (!this.chatMessages) return;
+        const el = document.createElement('div');
+        el.className = 'chat-message';
+        el.innerHTML = `<div class="sender">${msg.senderName}</div><div class="text">${msg.text}</div>`;
+        this.chatMessages.appendChild(el);
+        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    async sendChatMessage() {
+        const text = (this.chatInput?.value || '').trim();
+        if (!text) return;
+        const msgRef = database.ref(`rooms/${this.roomId}/chat`).push();
+        await msgRef.set({
+            senderId: this.userId,
+            senderName: this.userName,
+            text,
+            timestamp: firebase.database.ServerValue.TIMESTAMP
+        });
+        this.chatInput.value = '';
+    }
+
+    // Attendance export (teacher)
+    async exportAttendance() {
+        if (this.userRole !== 'teacher') return;
+        const snap = await database.ref(`rooms/${this.roomId}/participants`).once('value');
+        const participants = snap.val() || {};
+        const rows = [['Name','Role','Video','Audio','JoinedAt','LastActive']];
+        Object.entries(participants).forEach(([id, p]) => {
+            rows.push([
+                p.name,
+                p.role,
+                p.videoEnabled ? 'On' : 'Off',
+                p.audioEnabled ? 'On' : 'Off',
+                p.joinedAt ? new Date(p.joinedAt).toISOString() : '',
+                p.lastActive ? new Date(p.lastActive).toISOString() : ''
+            ]);
+        });
+        const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `attendance_${this.roomId}_${Date.now()}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     showQuizResultsModal() {
