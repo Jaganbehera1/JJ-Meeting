@@ -286,6 +286,9 @@ class VirtualClassroom {
             this.teacherVideo.setAttribute('muted', '');
             this.teacherTitle.textContent = `${this.userName}'s Screen`;
         }
+        
+        // Ensure participants grid is visible for all users
+        console.log(`UI updated for ${this.userRole}: teacher section=${this.teacherSection.style.display}, participants section=${this.participantsSection.style.display}`);
     }
 
     installAudioUnlockOnce() {
@@ -447,6 +450,7 @@ class VirtualClassroom {
         }
     
         this.updateParticipantsCount();
+        console.log(`Current peer connections: ${Object.keys(this.peers).length}`);
     }
 
     handleParticipantUpdated(snapshot) {
@@ -874,6 +878,7 @@ class VirtualClassroom {
             } else if (this.userRole === 'student' && participantData.role === 'student') {
                 // Student receiving another student's stream - show in participants grid
                 console.log(`Student: Adding peer student ${participantData.name} to grid`);
+                console.log(`Stream has ${stream.getTracks().length} tracks:`, stream.getTracks().map(t => t.kind));
                 this.showParticipantVideo(peerId, stream);
             }
         }).catch(error => {
@@ -882,9 +887,11 @@ class VirtualClassroom {
     }
 
     showParticipantVideo(peerId, stream) {
+        console.log(`showParticipantVideo called for ${peerId} with stream:`, stream);
         let participantCard = document.getElementById(`participant-${peerId}`);
         
         if (!participantCard) {
+            console.log(`Creating new participant card for ${peerId}`);
             // Create participant card if it doesn't exist
             participantCard = document.createElement('div');
             participantCard.className = 'participant-card';
@@ -912,13 +919,16 @@ class VirtualClassroom {
                         videoElement.onloadedmetadata = () => {
                             videoElement.play().catch(e => console.log('Play error:', e));
                         };
+                        console.log(`Video element created and stream assigned for ${participantData.name}`);
                     }
                     
                     this.participantsGrid.appendChild(participantCard);
                     this.updateParticipantsCount();
+                    console.log(`Participant card added to grid for ${participantData.name}`);
                 }
             });
         } else {
+            console.log(`Updating existing participant card for ${peerId}`);
             // Update existing participant card with new stream
             const videoElement = participantCard.querySelector('.participant-video');
             if (videoElement) {
@@ -926,6 +936,7 @@ class VirtualClassroom {
                 videoElement.onloadedmetadata = () => {
                     videoElement.play().catch(e => console.log('Play error:', e));
                 };
+                console.log(`Video element updated with new stream for ${peerId}`);
             }
         }
     }
