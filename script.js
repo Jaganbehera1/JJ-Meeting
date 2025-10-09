@@ -599,12 +599,15 @@ class VirtualClassroom {
         const participantData = snapshot.val();
         
         if (participantData) {
-            // Recreate connection with same initiator logic
+            // Recreate connection with same initiator logic, including student-student
             const isTeacherToStudent = this.userRole === 'teacher' && participantData.role === 'student';
             const isStudentToTeacher = this.userRole === 'student' && participantData.role === 'teacher';
-            
-            if (isTeacherToStudent || isStudentToTeacher) {
-                await this.createPeerConnection(peerId, true);
+            const isStudentToStudent = this.userRole === 'student' && participantData.role === 'student';
+
+            if (isTeacherToStudent || isStudentToTeacher || isStudentToStudent) {
+                // Teacher initiates; for student-student, lower userId initiates
+                const initiator = this.userRole === 'teacher' || (this.userRole === 'student' && this.userId < peerId);
+                await this.createPeerConnection(peerId, initiator);
             }
         }
     }
@@ -639,7 +642,7 @@ class VirtualClassroom {
             let peerConnection = this.peers[fromUserId];
             
             if (!peerConnection) {
-                // Create a new peer connection for valid role combinations
+                // Create a new peer connection for valid role combinations, including student-student
                 const participantRef = database.ref(`rooms/${this.roomId}/participants/${fromUserId}`);
                 const snapshot = await participantRef.once('value');
                 const participantData = snapshot.val();
@@ -647,9 +650,11 @@ class VirtualClassroom {
                 if (participantData) {
                     const isTeacherToStudent = this.userRole === 'teacher' && participantData.role === 'student';
                     const isStudentToTeacher = this.userRole === 'student' && participantData.role === 'teacher';
-                    if (isTeacherToStudent || isStudentToTeacher) {
-                      const initiator = this.userRole === 'teacher';
-                      peerConnection = await this.createPeerConnection(fromUserId, initiator);
+                    const isStudentToStudent = this.userRole === 'student' && participantData.role === 'student';
+                    if (isTeacherToStudent || isStudentToTeacher || isStudentToStudent) {
+                        // Deterministic initiator: teacher initiates; for student-student, lower userId initiates
+                        const initiator = this.userRole === 'teacher' || (this.userRole === 'student' && this.userId < fromUserId);
+                        peerConnection = await this.createPeerConnection(fromUserId, initiator);
                     }
                 }
             }
